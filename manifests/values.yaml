@@ -1,0 +1,25 @@
+nfd:
+  enabled: false
+  deployNodeFeatureRules: false
+
+deployCR: false
+
+maintenanceOperator:
+  enabled: false
+
+nvIpam:
+  deploy: true
+
+sriovNetworkOperator:
+  enabled: true
+
+sriov-network-operator:
+  sriovOperatorConfig:
+    configDaemonNodeSelector:
+      node-role.kubernetes.io/worker: ""
+    featureGates:
+      parallelNicConfig: true 
+      mellanoxFirmwareReset: false
+      resourceInjectorMatchCondition: false
+      metricsExporter: false
+      manageSoftwareBridges: false

@@ -1,0 +1,43 @@
+apiVersion: mellanox.com/v1alpha1
+kind: NicClusterPolicy
+metadata:
+  name: nic-cluster-policy
+spec:
+  nodeAffinity:
+    requiredDuringSchedulingIgnoredDuringExecution:
+      nodeSelectorTerms:
+      - matchExpressions:
+        - key: node-role.kubernetes.io/worker
+          operator: Exists
+  ofedDriver:
+    image: doca-driver
+    repository: nvcr.io/nvidia/mellanox
+    version: doca3.2.0-25.10-1.2.8.0-2
+    env:
+    - name: UNLOAD_STORAGE_MODULES
+      value: "true"
+    - name: ENTRYPOINT_DEBUG
+      value: "true"
+    - name: DEBUG_LOG_FILE
+      value: "/tmp/entrypoint_debug_cmds.log"
+    - name: DEBUG_SLEEP_SEC_ON_EXIT
+      value: "600"
+    upgradePolicy:
+      autoUpgrade: true
+      maxParallelUpgrades: 1
+      drain:
+        enable: false
+  secondaryNetwork:
+    multus:
+      image: multus-cni
+      repository: nvcr.io/nvidia/mellanox
+      version: network-operator-v25.10.0
+    cniPlugins:
+      image: plugins
+      repository: nvcr.io/nvidia/mellanox
+      version: network-operator-v25.10.0
+  nvIpam:
+    image: nvidia-k8s-ipam
+    repository: nvcr.io/nvidia/mellanox
+    version: network-operator-v25.10.0
+    enableWebhook: false

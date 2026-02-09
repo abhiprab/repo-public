@@ -1,0 +1,39 @@
+apiVersion: sriovnetwork.openshift.io/v1
+kind: SriovNetworkNodePolicy
+metadata:
+  name: sriovnet-supernic-a-lenovo
+  namespace: network-operator
+spec:
+  resourceName: "sriov_resource_a"
+  nodeSelector:
+    node-role.kubernetes.io/worker: ""
+    feature.node.kubernetes.io/pci-15b3.present: "true"
+  nicSelector:
+    vendor: "15b3"
+    pfNames: ["eth4"]
+  numVfs: 8
+  isRdma: true
+  deviceType: netdevice
+  mtu: 9000
+  linkType: ETH
+  priority: 20
+---
+apiVersion: sriovnetwork.openshift.io/v1
+kind: SriovNetworkNodePolicy
+metadata:
+  name: sriovnet-supernic-b-lenovo
+  namespace: network-operator
+spec:
+  resourceName: "sriov_resource_b"
+  nodeSelector:
+    node-role.kubernetes.io/worker: ""
+    feature.node.kubernetes.io/pci-15b3.present: "true"
+  nicSelector:
+    vendor: "15b3"
+    pfNames: ["eth5"]
+  numVfs: 8
+  isRdma: true
+  deviceType: netdevice
+  mtu: 9000
+  linkType: ETH
+  priority: 20
