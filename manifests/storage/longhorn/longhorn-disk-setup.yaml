@@ -1,0 +1,70 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: longhorn-disk-prep
+  namespace: kube-system
+spec:
+  selector:
+    matchLabels:
+      name: longhorn-disk-prep
+  template:
+    metadata:
+      labels:
+        name: longhorn-disk-prep
+    spec:
+      hostNetwork: true
+      hostPID: true
+      nodeSelector:
+        node-role.kubernetes.io/worker: ""
+      tolerations:
+      - operator: Exists
+      containers:
+      - name: disk-prep
+        image: ubuntu:24.04
+        securityContext:
+          privileged: true
+        command:
+        - /bin/bash
+        - -c
+        - |
+          set -e
+
+          DISK="/dev/sdb"
+
+          # Install required tools if missing
+          if ! command -v mkfs.xfs >/dev/null 2>&1; then
+            apt-get update && apt-get install -y xfsprogs util-linux
+          fi
+
+          # Only proceed if disk exists and is not mounted
+          if [ -b "$DISK" ] && ! mount | grep -q "$DISK"; then
+            echo "Preparing $DISK..."
+
+            wipefs -a "$DISK"
+
+            HOST_MOUNT_PATH="/mnt/longhorn-${DISK##*/}"
+
+            # Create mount directory on host
+            nsenter --mount=/proc/1/ns/mnt mkdir -p "$HOST_MOUNT_PATH"
+
+            # Format disk
+            mkfs.xfs -f "$DISK"
+
+            # Mount disk in host namespace
+            nsenter --mount=/proc/1/ns/mnt mount "$DISK" "$HOST_MOUNT_PATH"
+
+            echo "$DISK mounted at $HOST_MOUNT_PATH"
+          else
+            echo "$DISK does not exist or is already mounted"
+          fi
+
+          tail -f /dev/null
+        volumeMounts:
+        - name: host-root
+          mountPath: /host
+      volumes:
+      - name: host-root
+        hostPath:
+          path: /
+          type: Directory
+
