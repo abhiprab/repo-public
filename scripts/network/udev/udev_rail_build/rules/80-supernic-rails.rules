@@ -1,0 +1,54 @@
+# Generated SuperNIC PF rail naming
+# Filter: TYPE=SuperNIC and FUNC=PF
+# rail index is assigned by sorting PFs by PCI address on THIS host
+
+# pdx-g22r31-2894-ch2-w05: rail0pf  PCI=0000:09:00.0  MAC=b8:e9:24:ec:87:12
+SUBSYSTEM=="net", ACTION=="add", ATTR{address}=="b8:e9:24:ec:87:12", NAME="rail0pf"
+
+# pdx-g22r31-2894-ch2-w05: rail1pf  PCI=0000:23:00.0  MAC=b8:e9:24:ec:85:02
+SUBSYSTEM=="net", ACTION=="add", ATTR{address}=="b8:e9:24:ec:85:02", NAME="rail1pf"
+
+# pdx-g22r31-2894-ch2-w05: rail2pf  PCI=0000:53:00.0  MAC=b8:e9:24:ec:c5:c6
+SUBSYSTEM=="net", ACTION=="add", ATTR{address}=="b8:e9:24:ec:c5:c6", NAME="rail2pf"
+
+# pdx-g22r31-2894-ch2-w05: rail3pf  PCI=0000:69:00.0  MAC=b8:e9:24:ec:88:b4
+SUBSYSTEM=="net", ACTION=="add", ATTR{address}=="b8:e9:24:ec:88:b4", NAME="rail3pf"
+
+# pdx-g22r31-2894-ch2-w05: rail4pf  PCI=0000:8f:00.0  MAC=b8:e9:24:ec:d2:94
+SUBSYSTEM=="net", ACTION=="add", ATTR{address}=="b8:e9:24:ec:d2:94", NAME="rail4pf"
+
+# pdx-g22r31-2894-ch2-w05: rail5pf  PCI=0000:9c:00.0  MAC=b8:e9:24:ec:a2:7c
+SUBSYSTEM=="net", ACTION=="add", ATTR{address}=="b8:e9:24:ec:a2:7c", NAME="rail5pf"
+
+# pdx-g22r31-2894-ch2-w05: rail6pf  PCI=0000:cd:00.0  MAC=b8:e9:24:ed:2c:64
+SUBSYSTEM=="net", ACTION=="add", ATTR{address}=="b8:e9:24:ed:2c:64", NAME="rail6pf"
+
+# pdx-g22r31-2894-ch2-w05: rail7pf  PCI=0000:f1:00.0  MAC=b8:e9:24:eb:13:24
+SUBSYSTEM=="net", ACTION=="add", ATTR{address}=="b8:e9:24:eb:13:24", NAME="rail7pf"
+# Generated SuperNIC PF rail naming
+# Filter: TYPE=SuperNIC and FUNC=PF
+# rail index is assigned by sorting PFs by PCI address on THIS host
+
+# pdx-g24r31-2894-ch2-w06: rail0pf  PCI=0000:09:00.0  MAC=b8:e9:24:f3:3f:8a
+SUBSYSTEM=="net", ACTION=="add", ATTR{address}=="b8:e9:24:f3:3f:8a", NAME="rail0pf"
+
+# pdx-g24r31-2894-ch2-w06: rail1pf  PCI=0000:23:00.0  MAC=b8:e9:24:f3:79:76
+SUBSYSTEM=="net", ACTION=="add", ATTR{address}=="b8:e9:24:f3:79:76", NAME="rail1pf"
+
+# pdx-g24r31-2894-ch2-w06: rail2pf  PCI=0000:53:00.0  MAC=b8:e9:24:f3:37:a2
+SUBSYSTEM=="net", ACTION=="add", ATTR{address}=="b8:e9:24:f3:37:a2", NAME="rail2pf"
+
+# pdx-g24r31-2894-ch2-w06: rail3pf  PCI=0000:69:00.0  MAC=b8:e9:24:f3:20:2c
+SUBSYSTEM=="net", ACTION=="add", ATTR{address}=="b8:e9:24:f3:20:2c", NAME="rail3pf"
+
+# pdx-g24r31-2894-ch2-w06: rail4pf  PCI=0000:8f:00.0  MAC=b8:e9:24:f3:1f:7c
+SUBSYSTEM=="net", ACTION=="add", ATTR{address}=="b8:e9:24:f3:1f:7c", NAME="rail4pf"
+
+# pdx-g24r31-2894-ch2-w06: rail5pf  PCI=0000:9c:00.0  MAC=b8:e9:24:f3:7b:2e
+SUBSYSTEM=="net", ACTION=="add", ATTR{address}=="b8:e9:24:f3:7b:2e", NAME="rail5pf"
+
+# pdx-g24r31-2894-ch2-w06: rail6pf  PCI=0000:cd:00.0  MAC=b8:e9:24:f3:3f:b6
+SUBSYSTEM=="net", ACTION=="add", ATTR{address}=="b8:e9:24:f3:3f:b6", NAME="rail6pf"
+
+# pdx-g24r31-2894-ch2-w06: rail7pf  PCI=0000:f1:00.0  MAC=b8:e9:24:f3:1e:a0
+SUBSYSTEM=="net", ACTION=="add", ATTR{address}=="b8:e9:24:f3:1e:a0", NAME="rail7pf"

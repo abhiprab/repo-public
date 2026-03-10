@@ -1,0 +1,5 @@
+HOSTNAME,IFACE,FUNC,PARENT_PCI,PARENT_IFACE,BOND,CURR_MAC,PERM_MAC,SERIAL,PN,FW,STATUS,TYPE,PCI,MODEL_DESCRIPTION
+"pdx-2894-bcm-01","eth0","PF","N/A","N/A","N/A","c4:cb:e1:e1:50:c4","c4:cb:e1:e1:50:c4","5GSV564","BCM95720","FFV23.31.1 bc 5720-v1.39","up","Generic-NIC","0000:02:00.0","Broadcom Inc. and subsidiaries NetXtreme BCM5720 Gigabit Ethernet PCIe"
+"pdx-2894-bcm-01","eth1","PF","N/A","N/A","N/A","c4:cb:e1:e1:50:c5","c4:cb:e1:e1:50:c5","5GSV564","BCM95720","FFV23.31.1 bc 5720-v1.39","down","Generic-NIC","0000:02:00.1","Broadcom Inc. and subsidiaries NetXtreme BCM5720 Gigabit Ethernet PCIe"
+"pdx-2894-bcm-01","eth2","PF","N/A","N/A","bond0","56:7e:e1:34:fe:21","58:a2:e1:1e:9d:4e","MT2348300MMJ","900-9D3B6-00CV-AA0","32.38.3056 (MT_0000000884)","up","SmartNIC","0000:0d:00.0","Mellanox Technologies MT43244 BlueField-3 integrated ConnectX-7 network controller (rev 01)"
+"pdx-2894-bcm-01","eth3","PF","N/A","N/A","bond0","56:7e:e1:34:fe:21","58:a2:e1:1e:9d:4f","MT2348300MMJ","900-9D3B6-00CV-AA0","32.38.3056 (MT_0000000884)","up","SmartNIC","0000:0d:00.1","Mellanox Technologies MT43244 BlueField-3 integrated ConnectX-7 network controller (rev 01)"

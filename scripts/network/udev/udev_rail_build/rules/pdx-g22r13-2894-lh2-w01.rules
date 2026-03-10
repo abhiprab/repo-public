@@ -1,0 +1,27 @@
+# Generated SuperNIC PF rail naming
+# Filter: TYPE=SuperNIC and FUNC=PF
+# rail index is assigned by sorting PFs by PCI address on THIS host
+
+# pdx-g22r13-2894-lh2-w01: rail0pf  PCI=0000:19:00.0  MAC=b8:e9:24:b3:9b:ea
+SUBSYSTEM=="net", ACTION=="add", ATTR{address}=="b8:e9:24:b3:9b:ea", NAME="rail0pf"
+
+# pdx-g22r13-2894-lh2-w01: rail1pf  PCI=0000:2a:00.0  MAC=b8:e9:24:b3:a5:32
+SUBSYSTEM=="net", ACTION=="add", ATTR{address}=="b8:e9:24:b3:a5:32", NAME="rail1pf"
+
+# pdx-g22r13-2894-lh2-w01: rail2pf  PCI=0000:3b:00.0  MAC=b8:e9:24:b3:a5:74
+SUBSYSTEM=="net", ACTION=="add", ATTR{address}=="b8:e9:24:b3:a5:74", NAME="rail2pf"
+
+# pdx-g22r13-2894-lh2-w01: rail3pf  PCI=0000:4c:00.0  MAC=b8:e9:24:b3:76:46
+SUBSYSTEM=="net", ACTION=="add", ATTR{address}=="b8:e9:24:b3:76:46", NAME="rail3pf"
+
+# pdx-g22r13-2894-lh2-w01: rail4pf  PCI=0000:9b:00.0  MAC=b8:e9:24:b3:69:62
+SUBSYSTEM=="net", ACTION=="add", ATTR{address}=="b8:e9:24:b3:69:62", NAME="rail4pf"
+
+# pdx-g22r13-2894-lh2-w01: rail5pf  PCI=0000:ab:00.0  MAC=b8:e9:24:b3:81:b4
+SUBSYSTEM=="net", ACTION=="add", ATTR{address}=="b8:e9:24:b3:81:b4", NAME="rail5pf"
+
+# pdx-g22r13-2894-lh2-w01: rail6pf  PCI=0000:c1:00.0  MAC=b8:e9:24:b3:81:ca
+SUBSYSTEM=="net", ACTION=="add", ATTR{address}=="b8:e9:24:b3:81:ca", NAME="rail6pf"
+
+# pdx-g22r13-2894-lh2-w01: rail7pf  PCI=0000:cb:00.0  MAC=b8:e9:24:b3:99:82
+SUBSYSTEM=="net", ACTION=="add", ATTR{address}=="b8:e9:24:b3:99:82", NAME="rail7pf"

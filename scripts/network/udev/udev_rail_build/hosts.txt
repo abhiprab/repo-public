@@ -1,0 +1,6 @@
+pdx-g22r13-2894-lh2-w01
+pdx-g22r23-2894-dh2-w03
+pdx-g22r31-2894-ch2-w05
+pdx-g24r13-2894-lh2-w02
+pdx-g24r23-2894-dh2-w04
+pdx-g24r31-2894-ch2-w06
