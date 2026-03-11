@@ -37,11 +37,11 @@ echo -e "${BLUE}[INFO] Querying Kubernetes for worker node status...${NC}"
 RAW_NODES=$(kubectl get nodes -l node-role.kubernetes.io/worker=)
 mapfile -t ALL_NODES < <(echo "$RAW_NODES" | awk 'NR>1 {print $1}')
 
-# Check if ANY of these nodes exist in the CSV for a second-level hard gate
+# Check if ANY of these nodes exist in the CSV (Handling quotes and carriage returns)
 FOUND_ANY=0
 for node in "${ALL_NODES[@]}"; do
-    # SANITIZED CHECK: We strip carriage returns (\r) from the CSV content during the search
-    if tr -d '\r' < "$INPUT_CSV" | grep -q "^${node}," 2>/dev/null; then
+    # We strip both double quotes (") and carriage returns (\r) for the comparison
+    if tr -d '\r"' < "$INPUT_CSV" | grep -q "^${node}," 2>/dev/null; then
         FOUND_ANY=1
         break
     fi
@@ -54,8 +54,8 @@ if [[ $FOUND_ANY -eq 0 ]]; then
     echo -e "  K8s Node Sample: ${ALL_NODES[0]}"
     echo -e "  CSV First Entry: $(tail -n +2 "$INPUT_CSV" | head -n 1 | cut -d',' -f1)"
     echo -e "\n${BLUE}[ACTION REQUIRED]${NC}"
-    echo -e "The inventory file exists but the names are not matching exactly."
-    echo -e "Please ensure hostnames in K8s match the first column of your CSV."
+    echo -e "The hostnames in the CSV are likely quoted or formatted differently."
+    echo -e "Please ensure Option 2 is using the correct CSV export format."
     echo -e "----------------------------------------------------------------------------"
     exit 1
 fi
