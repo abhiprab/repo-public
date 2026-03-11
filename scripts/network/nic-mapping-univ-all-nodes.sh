@@ -8,10 +8,12 @@ OUT_DIR="/cm/shared/scripts/net-mapping/out"
 OUT_FILE="${OUT_DIR}/nic-inventory-merged-${DATE_STR}.csv"
 PARALLEL=8
 TEMP_DIR="${OUT_DIR}/tmp_raw"
-ENGINE_PATH="/cm/shared/scripts/net-mapping/nic-mapping-univ.sh"
+# Local path on jumpbox to the engine
+LOCAL_ENGINE="/cm/shared/scripts/net-mapping/nic-mapping-univ.sh"
+# Temporary path on the worker node
+REMOTE_TMP_EXE="/tmp/nic-mapping-univ.sh"
 DEBUG_IMAGE="registry.k8s.io/e2e-test-images/busybox:1.29"
 
-# Parse Args
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --out) OUT_FILE="$2"; shift 2 ;;
@@ -29,14 +31,16 @@ run_node() {
     local node=$1
     local node_csv="${TEMP_DIR}/${node}-${DATE_STR}.csv"
     
-    # We use a subshell to capture the output of the debug pod
-    # and write it directly from the master node to ensure the file is created.
-    echo "[INFO] (${node}) starting collection..."
+    echo "[INFO] (${node}) preparing and collecting..."
 
-    # Execute and capture the STDOUT from the debug pod directly to our local disk
-    # This bypasses the need for the node to have write access to the shared folder
+    # 1. Push the engine to the node's local /tmp (avoids NFS issues)
+    # We use a helper pod or ephemeral container to place the file
+    kubectl cp "$LOCAL_ENGINE" "${node}:${REMOTE_TMP_EXE}" -c debug-container 2>/dev/null || \
+    kubectl debug "node/${node}" --image="$DEBUG_IMAGE" --quiet -- bash -c "cat > $REMOTE_TMP_EXE" < "$LOCAL_ENGINE"
+
+    # 2. Execute from local /tmp
     if kubectl debug "node/${node}" -it --quiet --image="$DEBUG_IMAGE" -- \
-        chroot /host bash -c "sudo $ENGINE_PATH --csv --print" > "$node_csv" 2>/dev/null; then
+        chroot /host bash -c "chmod +x $REMOTE_TMP_EXE && sudo $REMOTE_TMP_EXE --csv --print" > "$node_csv" 2>/dev/null; then
         
         if [[ -s "$node_csv" ]]; then
             echo "[SUCCESS] (${node}) data captured."
@@ -45,40 +49,36 @@ run_node() {
             rm -f "$node_csv"
         fi
     else
-        echo "[ERROR] (${node}) connection failed."
-        rm -f "$node_csv"
+        echo "[ERROR] (${node}) execution failed."
     fi
+
+    # 3. Cleanup the remote temp file
+    kubectl debug "node/${node}" --image="$DEBUG_IMAGE" --quiet -- rm -f "$REMOTE_TMP_EXE" > /dev/null 2>&1
 }
 
 export -f run_node
-export TEMP_DIR ENGINE_PATH DEBUG_IMAGE DATE_STR
+export TEMP_DIR LOCAL_ENGINE REMOTE_TMP_EXE DEBUG_IMAGE DATE_STR
 
-# FIXED XARGS: Removed -n 1 to resolve the conflict with -I
 echo "$NODES" | tr ' ' '\n' | xargs -I {} -P "$PARALLEL" bash -c 'run_node "{}"'
 
-# --- PHASE 2: MERGE DATA ---
-echo "[INFO] Merging per-node files into $OUT_FILE..."
-
-# Check if any files were actually created
+# --- PHASE 2: MERGE DATA (Same logic as before) ---
+echo "[INFO] Merging results into $OUT_FILE..."
 shopt -s nullglob
 FILES=("$TEMP_DIR"/*-"$DATE_STR".csv)
 
 if [[ ${#FILES[@]} -eq 0 ]]; then
-    echo "ERROR: No individual node CSVs found in $TEMP_DIR. Check if kubectl debug is permitted." >&2
+    echo "ERROR: No data captured. Check kubectl permissions." >&2
     exit 1
 fi
 
-# Write header from first file
 head -n 1 "${FILES[0]}" > "$OUT_FILE"
-
-# Append rows (skipping header)
 for f in "${FILES[@]}"; do
     tail -n +2 "$f" >> "$OUT_FILE"
 done
 
-# Organize reports
+# Organize
 NODE_OUT_DIR="${OUT_DIR}/node_reports/${DATE_STR}"
 mkdir -p "$NODE_OUT_DIR"
 mv "$TEMP_DIR"/*-"$DATE_STR".csv "$NODE_OUT_DIR/"
 
-echo "[OK] Master cluster inventory: $OUT_FILE"
+echo "[OK] Merged inventory: $OUT_FILE"
