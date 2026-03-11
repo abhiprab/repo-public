@@ -1,7 +1,5 @@
 #!/usr/bin/env bash
-# generate-udev-rules-interactive.sh
-# Wraps Python generator with a consistent UI for node selection.
-
+# generate-udev-rules-interactive.sh - Version 1.1
 set -u
 
 # --- CONFIGURATION ---
@@ -9,6 +7,7 @@ BASE_DIR="/cm/shared/scripts/net-mapping"
 OUT_DIR="${BASE_DIR}/out/udev_rules/latest"
 INPUT_CSV="${BASE_DIR}/out/manual_inventory.csv"
 PYTHON_GEN="${BASE_DIR}/generate-udev-rules.py"
+COLLECTOR_SCRIPT="${BASE_DIR}/nic-mapping-univ-all-nodes.sh"
 
 # Colors
 BLUE='\033[0;34m'
@@ -20,77 +19,57 @@ NC='\033[0m'
 
 mkdir -p "$OUT_DIR"
 
-echo -e "${BLUE}[INFO] Querying Kubernetes for worker node status...${NC}"
-
-# 1. Capture raw kubectl output for display
+echo -e "${BLUE}[INFO] Querying Kubernetes Node Status...${NC}"
 RAW_NODES=$(kubectl get nodes -l node-role.kubernetes.io/worker=)
 mapfile -t ALL_NODES < <(echo "$RAW_NODES" | awk 'NR>1 {print $1}')
 
-if [[ ${#ALL_NODES[@]} -eq 0 ]]; then
-    echo -e "${RED}[ERROR] No worker nodes found via kubectl.${NC}"; exit 1
-fi
-
-# 2. Display Node Status Table
 echo -e "\n${CYAN}Cluster Worker Node Status:${NC}"
 echo -e "${BLUE}-----------------------------------------------------------------------${NC}"
 echo "$RAW_NODES"
 echo -e "${BLUE}-----------------------------------------------------------------------${NC}"
 
-# 3. Selection Menu
-echo -e "${YELLOW}Select Nodes to Generate UDEV Rules for:${NC}"
+echo -e "${YELLOW}Select Nodes for Rule Generation:${NC}"
 for i in "${!ALL_NODES[@]}"; do
     node="${ALL_NODES[$i]}"
-    node_status=$(echo "$RAW_NODES" | grep "^${node} " | awk '{print $2}')
-    
-    # Check if node exists in the CSV inventory
-    inventory_hint=""
-    if grep -q "^${node}," "$INPUT_CSV" 2>/dev/null; then
-        inventory_hint="${GREEN}(In Inventory)${NC}"
-    else
-        inventory_hint="${RED}(Missing from Inventory)${NC}"
-    fi
-
-    status_hint=""
-    [[ "$node_status" != "Ready" ]] && status_hint=" ${RED}[$node_status]${NC}"
-
-    printf "%2d) %-20s %b %b\n" "$((i+1))" "$node" "$inventory_hint" "$status_hint"
+    inv_hint=$([[ -f "$INPUT_CSV" ]] && grep -q "^${node}," "$INPUT_CSV" && echo -e "${GREEN}(In Inventory)${NC}" || echo -e "${RED}(Missing Data)${NC}")
+    printf "%2d) %-20s %b\n" "$((i+1))" "$node" "$inv_hint"
 done
-echo -e " a) ALL Nodes in Inventory"
-echo -e " q) Quit"
+echo -e " a) ALL Nodes with Inventory Data\n q) Quit"
+read -p ">> " choice
 
-read -p ">> Selection: " choice
-
-# 4. Process Selection
 SELECTED_NODES=()
 if [[ "$choice" == "a" ]]; then
-    # Grab all node names that are actually in the CSV
-    SELECTED_NODES=($(awk -F, 'NR>1 {print $1}' "$INPUT_CSV" | sort -u))
-elif [[ "$choice" == "q" || -z "$choice" ]]; then
-    exit 0
-else
+    for node in "${ALL_NODES[@]}"; do
+        [[ -f "$INPUT_CSV" ]] && grep -q "^${node}," "$INPUT_CSV" && SELECTED_NODES+=("$node")
+    done
+elif [[ "$choice" != "q" ]]; then
     IFS=',' read -ra ADDR <<< "$choice"
     for idx in "${ADDR[@]}"; do
         idx=$(echo "$idx" | tr -d ' ')
-        if [[ "$idx" =~ ^[0-9]+$ ]] && [ "$idx" -le "${#ALL_NODES[@]}" ]; then
-            SELECTED_NODES+=("${ALL_NODES[$((idx-1))]}")
+        node="${ALL_NODES[$((idx-1))]}"
+        
+        # --- MISSING DATA AUTO-FIX ---
+        if ! grep -q "^${node}," "$INPUT_CSV" 2>/dev/null; then
+            echo -e "${YELLOW}[WARN]${NC} $node is missing data."
+            read -p "Run Quick Scan for $node now? (y/n): " do_scan
+            if [[ "$do_scan" == "y" ]]; then
+                bash "$COLLECTOR_SCRIPT" "$node"
+            fi
         fi
+        
+        # Verify again after potential scan
+        grep -q "^${node}," "$INPUT_CSV" 2>/dev/null && SELECTED_NODES+=("$node")
     done
 fi
 
-if [[ ${#SELECTED_NODES[@]} -eq 0 ]]; then
-    echo -e "${RED}[ERROR] No nodes selected.${NC}"; exit 1
+if [[ ${#SELECTED_NODES[@]} -gt 0 ]]; then
+    # Filter CSV and run Python
+    FILTERED_CSV="${OUT_DIR}/filtered_selection.csv"
+    head -n 1 "$INPUT_CSV" > "$FILTERED_CSV"
+    for n in "${SELECTED_NODES[@]}"; do grep "^${n}," "$INPUT_CSV" >> "$FILTERED_CSV"; done
+    
+    python3 "$PYTHON_GEN" "$FILTERED_CSV" "$OUT_DIR"
+    echo -e "${GREEN}[SUCCESS] Rules generated.${NC}"
+else
+    echo -e "${RED}[EXIT] No nodes with data selected.${NC}"
 fi
-
-# 5. Create a filtered CSV for Python to process
-# This ensures Python only generates rules for the nodes you picked
-FILTERED_CSV="${OUT_DIR}/filtered_selection.csv"
-head -n 1 "$INPUT_CSV" > "$FILTERED_CSV"
-for node in "${SELECTED_NODES[@]}"; do
-    grep "^${node}," "$INPUT_CSV" >> "$FILTERED_CSV" || echo -e "${YELLOW}[WARN]${NC} Node $node has no inventory data."
-done
-
-# 6. Call your Python Script
-echo -e "\n${BLUE}[INFO] Running Python UDEV Generator...${NC}"
-python3 "$PYTHON_GEN" "$FILTERED_CSV" "$OUT_DIR"
-
-echo -e "\n${GREEN}[SUCCESS] Interaction complete.${NC}"
