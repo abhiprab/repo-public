@@ -6,31 +6,44 @@ DATE_STR=$(date +%F-%H%M%S)
 OUT_DIR="/cm/shared/scripts/net-mapping/out"
 TEMP_DIR="${OUT_DIR}/tmp_raw"
 SCRIPT_ON_NODE="/cm/shared/scripts/net-mapping/nic-mapping-univ.sh"
-DEBUG_OPTS="--quiet --image=registry.k8s.io/e2e-test-images/busybox:1.29 --profile=general"
 
 mkdir -p "$TEMP_DIR"
 
 # --- COLLECTION FUNCTION ---
 run_node() {
     local node="$1"
+    local raw_out="${TEMP_DIR}/${node}-${DATE_STR}.raw"
     local node_csv="${TEMP_DIR}/${node}-${DATE_STR}.csv"
     local node_err="${TEMP_DIR}/${node}-${DATE_STR}.err"
-    local script_path="/cm/shared/scripts/net-mapping/nic-mapping-univ.sh"
+    local script_path="${SCRIPT_ON_NODE}"
 
     echo -e "${BLUE}[INFO]${NC} (${node}) capturing via SSH..."
 
     if ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=5 "$node" \
-        "sudo -n $script_path --csv --print" > "$node_csv" 2>"$node_err"; then
+        "sudo -n $script_path --csv --print" > "$raw_out" 2>"$node_err"; then
 
-        sed -i 's/\r//g' "$node_csv"
+        sed -i 's/\r//g' "$raw_out"
 
-        if [[ -s "$node_csv" ]] && grep -q "HOSTNAME" "$node_csv"; then
+        if [[ -s "$raw_out" ]] && head -n 1 "$raw_out" | grep -Eq '^IFACE[[:space:]]+FUNC'; then
+            awk -v host="$node" '
+                BEGIN { OFS="," }
+                NR==1 {
+                    gsub(/[[:space:]]+/, ",")
+                    print "HOSTNAME," $0
+                    next
+                }
+                {
+                    gsub(/[[:space:]]+/, ",")
+                    print host "," $0
+                }
+            ' "$raw_out" > "$node_csv"
+
             echo -e "${GREEN}[SUCCESS]${NC} (${node}) captured."
-            rm -f "$node_err"
+            rm -f "$raw_out" "$node_err"
         else
             echo -e "${RED}[ERROR]${NC} (${node}) command ran but output is invalid."
             [[ -s "$node_err" ]] && sed 's/^/  /' "$node_err"
-            rm -f "$node_csv"
+            rm -f "$raw_out" "$node_csv"
         fi
     else
         if [[ -s "$node_err" ]]; then
@@ -43,12 +56,12 @@ run_node() {
         else
             echo -e "${RED}[ERROR]${NC} (${node}) SSH connection failed."
         fi
-        rm -f "$node_csv"
+        rm -f "$raw_out" "$node_csv"
     fi
 }
 
 export -f run_node
-export SCRIPT_ON_NODE TEMP_DIR DEBUG_OPTS DATE_STR BLUE GREEN RED NC
+export SCRIPT_ON_NODE TEMP_DIR DATE_STR BLUE GREEN RED NC
 
 # Parallel Execute
 NODES=$(kubectl get nodes -l node-role.kubernetes.io/worker= -o jsonpath='{.items[*].metadata.name}')
@@ -60,7 +73,6 @@ shopt -s nullglob
 files=( "$TEMP_DIR"/*"${DATE_STR}".csv )
 
 if [[ ${#files[@]} -gt 0 ]]; then
-    # Create the master file on the Jumpbox's local disk
     head -n 1 "${files[0]}" > "${OUT_DIR}/manual_inventory.csv"
     for f in "${files[@]}"; do
         tail -n +2 "$f" >> "${OUT_DIR}/manual_inventory.csv"
