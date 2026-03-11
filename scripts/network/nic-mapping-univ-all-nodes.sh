@@ -31,25 +31,25 @@ run_node() {
     local node=$1
     local node_csv="${TEMP_DIR}/${node}-${DATE_STR}.csv"
     
-    echo -e "${BLUE}[INFO]${NC} (${node}) injecting discovery engine..."
+    echo -e "${BLUE}[INFO]${NC} (${node}) executing discovery engine via stdin..."
 
-    # 1. Encode the local script into a Base64 string
-    local B64_SCRIPT=$(base64 -w 0 < "$LOCAL_ENGINE")
-
-    # 2. Pass the string into the debug pod, decode it, and execute it
-    # We use --profile=general and remove -it for clean output
+    # We use a Here-Doc to pipe the script content directly into the node's bash
+    # Note: We use 'bash -s' to ensure it accepts the stream as a script
     if kubectl debug "node/${node}" --quiet --image="$DEBUG_IMAGE" --profile=general -- \
-        chroot /host bash -c "echo '$B64_SCRIPT' | base64 -d | bash -s -- --csv --print" > "$node_csv" 2>/dev/null; then
+        chroot /host /bin/bash -s -- --csv --print < "$LOCAL_ENGINE" > "$node_csv" 2>/dev/null; then
         
         if grep -q "HOSTNAME" "$node_csv"; then
             echo -e "${GREEN}[SUCCESS]${NC} (${node}) data captured."
         else
-            echo -e "${RED}[ERROR]${NC} (${node}) data invalid or empty. Content: $(cat $node_csv)"
+            # Error checking: see what actually came back
+            local err_content=$(cat "$node_csv")
+            echo -e "${RED}[ERROR]${NC} (${node}) invalid output: ${err_content:-'Empty Output'}"
             rm -f "$node_csv"
         fi
     else
         echo -e "${RED}[ERROR]${NC} (${node}) connection failed."
     fi
+}
 }
 
 export -f run_node
