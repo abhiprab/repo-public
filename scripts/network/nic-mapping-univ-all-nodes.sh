@@ -13,25 +13,28 @@ mkdir -p "$TEMP_DIR"
 # --- COLLECTION FUNCTION ---
 run_node() {
     local node="$1"
-    local out_csv="${TEMP_DIR}/${node}-${DATE_STR}.csv"
-    echo -e "${BLUE}[INFO]${NC} (${node}) streaming to jumpbox..."
+    local node_csv="${TEMP_DIR}/${node}-${DATE_STR}.csv"
+    local script_path="/cm/shared/scripts/net-mapping/nic-mapping-univ.sh"
+    
+    echo -e "${BLUE}[INFO]${NC} (${node}) capturing via absolute path..."
 
-    # 1. We run the script on the node, but the '>' REDIRECTION happens on the JUMPBOX.
-    # 2. We use '-i' (interactive) but NO '-t' (no TTY) to get raw, clean CSV text.
-    if kubectl debug "node/${node}" -i $DEBUG_OPTS -- \
-        chroot /host bash -lc "'$SCRIPT_ON_NODE' --csv --print" > "$out_csv" 2>/dev/null; then
+    # We call the script directly via its absolute path inside the chroot.
+    # We remove 'bash -lc' to avoid environment/alias issues.
+    if kubectl debug "node/${node}" -i --quiet --image="$DEBUG_IMAGE" --profile=general -- \
+        chroot /host "$script_path" --csv --print > "$node_csv" 2>/dev/null; then
         
-        # Clean up any potential Windows line endings or TTY artifacts
-        sed -i 's/\r//g' "$out_csv"
+        sed -i 's/\r//g' "$node_csv"
 
-        if [[ -s "$out_csv" ]] && grep -q "HOSTNAME" "$out_csv"; then
+        if [[ -s "$node_csv" ]] && grep -q "HOSTNAME" "$node_csv"; then
             echo -e "${GREEN}[SUCCESS]${NC} (${node}) captured."
         else
-            echo -e "${RED}[ERROR]${NC} (${node}) stream was empty or invalid."
-            rm -f "$out_csv"
+            # DIAGNOSTIC: If it fails, let's see what the pod actually said
+            local err_msg=$(kubectl debug "node/${node}" -i --quiet --image="$DEBUG_IMAGE" --profile=general -- chroot /host "$script_path" --csv --print 2>&1)
+            echo -e "${RED}[ERROR]${NC} (${node}) Failed. Node said: ${err_msg:0:50}..."
+            rm -f "$node_csv"
         fi
     else
-        echo -e "${RED}[ERROR]${NC} (${node}) debug session failed."
+        echo -e "${RED}[ERROR]${NC} (${node}) connection failed."
     fi
 }
 
