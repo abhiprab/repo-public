@@ -22,27 +22,33 @@ mkdir -p "$TEMP_DIR"
 NODES=$(kubectl get nodes -l node-role.kubernetes.io/worker= -o jsonpath='{.items[*].metadata.name}')
 
 run_node() {
-    local node=$1
+    local node="$1"
     local node_csv="${TEMP_DIR}/${node}-${DATE_STR}.csv"
-    # This is the path as seen by the worker node's host OS
-    local host_script="/cm/shared/scripts/net-mapping/nic-mapping-univ.sh"
+    
+    echo -e "${BLUE}[INFO]${NC} (${node}) collecting via shared mount..."
 
-    echo -e "${BLUE}[INFO]${NC} (${node}) executing via K8s host path..."
+    # 1. Run via kubectl debug
+    # 2. Command: chroot /host and execute the script
+    # 3. Target: Tell the script to save the CSV directly to the shared path
+    # 4. Profile: Use --profile=general to ensure host access (added for modern K8s)
+    if kubectl debug "node/${node}" --quiet --image="${DEBUG_IMAGE}" --profile=general -- \
+        chroot /host bash -lc "
+            if [[ ! -x '${LOCAL_ENGINE}' ]]; then
+                echo 'ERROR: Script not found on node' >&2
+                exit 1
+            fi
+            # Execute and write directly to the path the jumpbox can see
+            '${LOCAL_ENGINE}' --csv --out '${node_csv}'
+        " >/dev/null 2>&1; then
 
-    # 1. We use --profile=general to get host access
-    # 2. We chroot into /host so the script sees the real NICs
-    # 3. We run the script directly from the shared mount
-    if kubectl debug "node/${node}" --quiet --image="$DEBUG_IMAGE" --profile=general -- \
-        chroot /host /bin/bash "$host_script" --csv --print > "$node_csv" 2>/dev/null; then
-
-        if grep -q "HOSTNAME" "$node_csv"; then
+        # Verify the jumpbox can see the file the node just wrote
+        if [[ -f "$node_csv" ]]; then
             echo -e "${GREEN}[SUCCESS]${NC} (${node}) data captured."
         else
-            echo -e "${RED}[ERROR]${NC} (${node}) captured invalid data. Check if mount exists on node."
-            rm -f "$node_csv"
+            echo -e "${RED}[ERROR]${NC} (${node}) CSV not visible on jumpbox. Check mount sync."
         fi
     else
-        echo -e "${RED}[ERROR]${NC} (${node}) kubectl debug failed for this node."
+        echo -e "${RED}[ERROR]${NC} (${node}) execution failed."
     fi
 }
 
