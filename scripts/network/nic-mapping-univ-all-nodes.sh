@@ -33,13 +33,14 @@ run_node() {
     
     echo "[INFO] (${node}) preparing and collecting..."
 
-    # 1. Push the engine to the node's local /tmp (avoids NFS issues)
-    # We use a helper pod or ephemeral container to place the file
-    kubectl cp "$LOCAL_ENGINE" "${node}:${REMOTE_TMP_EXE}" -c debug-container 2>/dev/null || \
-    kubectl debug "node/${node}" --image="$DEBUG_IMAGE" --quiet -- bash -c "cat > $REMOTE_TMP_EXE" < "$LOCAL_ENGINE"
+    # 1. Push the engine to the node's local /tmp
+    # We use --profile=general to stop the legacy warning
+    kubectl debug "node/${node}" --image="$DEBUG_IMAGE" --profile=general --quiet -- \
+        bash -c "cat > $REMOTE_TMP_EXE" < "$LOCAL_ENGINE" 2>/dev/null
 
     # 2. Execute from local /tmp
-    if kubectl debug "node/${node}" -it --quiet --image="$DEBUG_IMAGE" -- \
+    # Added --profile=general here as well to keep the execution silent
+    if kubectl debug "node/${node}" -it --quiet --image="$DEBUG_IMAGE" --profile=general -- \
         chroot /host bash -c "chmod +x $REMOTE_TMP_EXE && sudo $REMOTE_TMP_EXE --csv --print" > "$node_csv" 2>/dev/null; then
         
         if [[ -s "$node_csv" ]]; then
@@ -52,8 +53,8 @@ run_node() {
         echo "[ERROR] (${node}) execution failed."
     fi
 
-    # 3. Cleanup the remote temp file
-    kubectl debug "node/${node}" --image="$DEBUG_IMAGE" --quiet -- rm -f "$REMOTE_TMP_EXE" > /dev/null 2>&1
+    # 3. Cleanup the remote temp file silently
+    kubectl debug "node/${node}" --image="$DEBUG_IMAGE" --profile=general --quiet -- rm -f "$REMOTE_TMP_EXE" > /dev/null 2>&1
 }
 
 export -f run_node
