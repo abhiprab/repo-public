@@ -319,20 +319,20 @@ for dev in /sys/class/net/*; do
   fi
 
   # Update widths for pretty table
-  (( ${#iface} > w_iface )) && w_iface=${#iface}
-  (( ${#func} > w_func )) && w_func=${#func}
-  (( ${#parent_pci} > w_parent )) && w_parent=${#parent_pci}
-  (( ${#parent_iface} > w_piface )) && w_piface=${#parent_iface}
-  (( ${#bond} > w_bond )) && w_bond=${#bond}
-  (( ${#cmac} > w_cmac )) && w_cmac=${#cmac}
-  (( ${#pmac} > w_pmac )) && w_pmac=${#pmac}
-  (( ${#sn} > w_sn )) && w_sn=${#sn}
-  (( ${#pn} > w_pn )) && w_pn=${#pn}
-  (( ${#fw} > w_fw )) && w_fw=${#fw}
-  (( ${#stat} > w_stat )) && w_stat=${#stat}
-  (( ${#type} > w_type )) && w_type=${#type}
-  (( ${#pci} > w_pci )) && w_pci=${#pci}
-  (( ${#desc} > w_desc )) && w_desc=${#desc}
+if (( ${#iface} > w_iface )); then w_iface=${#iface}; fi
+if (( ${#func} > w_func )); then w_func=${#func}; fi
+if (( ${#parent_pci} > w_parent )); then w_parent=${#parent_pci}; fi
+if (( ${#parent_iface} > w_piface )); then w_piface=${#parent_iface}; fi
+if (( ${#bond} > w_bond )); then w_bond=${#bond}; fi
+if (( ${#cmac} > w_cmac )); then w_cmac=${#cmac}; fi
+if (( ${#pmac} > w_pmac )); then w_pmac=${#pmac}; fi
+if (( ${#sn} > w_sn )); then w_sn=${#sn}; fi
+if (( ${#pn} > w_pn )); then w_pn=${#pn}; fi
+if (( ${#fw} > w_fw )); then w_fw=${#fw}; fi
+if (( ${#stat} > w_stat )); then w_stat=${#stat}; fi
+if (( ${#type} > w_type )); then w_type=${#type}; fi
+if (( ${#pci} > w_pci )); then w_pci=${#pci}; fi
+if (( ${#desc} > w_desc )); then w_desc=${#desc}; fi
 
   echo "$iface|$func|$parent_pci|$parent_iface|$bond|$cmac|$pmac|$sn|$pn|$fw|$stat|$type|$pci|$desc" >> "$TMP_DATA"
 
@@ -354,7 +354,7 @@ for dev in /sys/class/net/*; do
     "$desc"
 
   count=$((count+1))
-done
+  done
 
 if [[ "$count" -eq 0 ]]; then
   echo "No NICs found under /sys/class/net (after filtering)." >&2
