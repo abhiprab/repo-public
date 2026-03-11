@@ -22,7 +22,7 @@ mkdir -p "$OUT_DIR"
 
 # --- 1. PRE-FLIGHT CHECK (MATCHING BAKE SCRIPT UI) ---
 if [[ ! -f "$INPUT_CSV" ]]; then
-    echo -e "${RED}[ERROR] Inventory database is missing!${NC}"
+    echo -e "${RED}[ERROR] Inventory data is missing!${NC}"
     echo -e "${YELLOW}Path:${NC} $INPUT_CSV"
     echo -e "\n${BLUE}[ACTION REQUIRED]${NC}"
     echo -e "You must perform an initial hardware scan first."
