@@ -30,25 +30,32 @@ NODES=$(kubectl get nodes -l node-role.kubernetes.io/worker= -o jsonpath='{.item
 run_node() {
     local node=$1
     local node_csv="${TEMP_DIR}/${node}-${DATE_STR}.csv"
+    local remote_exe="/tmp/nic-mapping-univ.sh"
     
-    echo -e "${BLUE}[INFO]${NC} (${node}) executing discovery engine via stdin..."
+    echo -e "${BLUE}[INFO]${NC} (${node}) staging script via kubectl cp..."
 
-    # We use a Here-Doc to pipe the script content directly into the node's bash
-    # Note: We use 'bash -s' to ensure it accepts the stream as a script
+    # 1. Copy the script to the node's local /tmp directory
+    # We use -c to specify the container name if needed, but usually not required for debug pods
+    kubectl cp "$LOCAL_ENGINE" "${node}:${remote_exe}" >/dev/null 2>&1
+
+    # 2. Execute the script from the local path
+    # We use 'chroot /host' so the script sees the real hardware /sys/class/net
     if kubectl debug "node/${node}" --quiet --image="$DEBUG_IMAGE" --profile=general -- \
-        chroot /host /bin/bash -s -- --csv --print < "$LOCAL_ENGINE" > "$node_csv" 2>/dev/null; then
+        chroot /host /bin/bash "$remote_exe" --csv --print > "$node_csv" 2>/dev/null; then
         
         if grep -q "HOSTNAME" "$node_csv"; then
             echo -e "${GREEN}[SUCCESS]${NC} (${node}) data captured."
         else
-            # Error checking: see what actually came back
-            local err_content=$(cat "$node_csv")
-            echo -e "${RED}[ERROR]${NC} (${node}) invalid output: ${err_content:-'Empty Output'}"
+            echo -e "${RED}[ERROR]${NC} (${node}) invalid output. Check node /tmp permissions."
             rm -f "$node_csv"
         fi
     else
-        echo -e "${RED}[ERROR]${NC} (${node}) connection failed."
+        echo -e "${RED}[ERROR]${NC} (${node}) execution failed."
     fi
+
+    # 3. Cleanup: Remove the script from the node
+    kubectl debug "node/${node}" --quiet --image="$DEBUG_IMAGE" --profile=general -- \
+        rm -f "/host${remote_exe}" >/dev/null 2>&1
 }
 
 export -f run_node
