@@ -27,18 +27,22 @@ run_node() {
     
     echo -e "${BLUE}[INFO]${NC} (${node}) executing via shared mount..."
 
-    # Direct SSH execution of the shared script
-    # We use 'sudo' because NIC discovery usually needs root privileges for lshw/ethtool
-    if ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no "$node" "sudo $SHARED_ENGINE --csv --print" > "$node_csv" 2>/dev/null; then
+    # 1. Use -t to force a TTY (needed for many sudo configs)
+    # 2. Use -o BatchMode=yes to fail fast instead of hanging on a password prompt
+    if ssh -t -o BatchMode=yes -o StrictHostKeyChecking=no "$node" \
+        "sudo ${SHARED_ENGINE} --csv --print" > "$node_csv" 2>/dev/null; then
         
+        # Strip any DOS line endings or TTY artifacts that might come back
+        sed -i 's/\r//g' "$node_csv"
+
         if grep -q "HOSTNAME" "$node_csv"; then
             echo -e "${GREEN}[SUCCESS]${NC} (${node}) data captured."
         else
-            echo -e "${RED}[ERROR]${NC} (${node}) failed to capture CSV. Check if sudo requires password."
+            echo -e "${RED}[ERROR]${NC} (${node}) captured data invalid. Check sudoers on node."
             rm -f "$node_csv"
         fi
     else
-        echo -e "${RED}[ERROR]${NC} (${node}) SSH connection or execution failed."
+        echo -e "${RED}[ERROR]${NC} (${node}) SSH/Sudo failed. Verify 'ssh $node' works without a password."
     fi
 }
 
