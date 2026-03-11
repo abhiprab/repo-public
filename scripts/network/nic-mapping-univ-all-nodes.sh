@@ -14,27 +14,27 @@ mkdir -p "$TEMP_DIR"
 run_node() {
     local node="$1"
     local node_csv="${TEMP_DIR}/${node}-${DATE_STR}.csv"
+    # The absolute path to the script as seen by the worker nodes
     local script_path="/cm/shared/scripts/net-mapping/nic-mapping-univ.sh"
     
-    echo -e "${BLUE}[INFO]${NC} (${node}) capturing data..."
+    echo -e "${BLUE}[INFO]${NC} (${node}) capturing via SSH..."
 
-    # 1. Run the script on the node (No -i, No -t)
-    # 2. We use 'kubectl exec' style logic inside a debug pod
-    # 3. We use a simpler execution string
-    if kubectl debug "node/${node}" --quiet --image="$DEBUG_IMAGE" --profile=general -- \
-        chroot /host bash -c "$script_path --csv --print" > "$node_csv" 2>/dev/null; then
+    # -o BatchMode=yes: Don't hang on password prompts
+    # -o ConnectTimeout=5: Fail fast if node is down
+    if ssh -o BatchMode=yes -o StrictHostKeyChecking=no "$node" \
+        "sudo $script_path --csv --print" > "$node_csv" 2>/dev/null; then
         
-        # Clean up any TTY/line ending garbage
+        # Clean TTY garbage
         sed -i 's/\r//g' "$node_csv"
 
         if [[ -s "$node_csv" ]] && grep -q "HOSTNAME" "$node_csv"; then
             echo -e "${GREEN}[SUCCESS]${NC} (${node}) captured."
         else
-            echo -e "${RED}[ERROR]${NC} (${node}) data was empty. Check if $script_path is executable on the node."
+            echo -e "${RED}[ERROR]${NC} (${node}) failed. Check if sudo requires a password."
             rm -f "$node_csv"
         fi
     else
-        echo -e "${RED}[ERROR]${NC} (${node}) pod execution failed."
+        echo -e "${RED}[ERROR]${NC} (${node}) SSH connection failed."
     fi
 }
 
