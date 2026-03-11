@@ -1,15 +1,14 @@
 #!/usr/bin/env bash
-# generate-udev-rules.sh - Version 1.3
-# Interactive Rule Generator with consistent worker node status header.
+# bake-udev-rules-image.sh - Version 1.4
+# Reference Logic: generate-ramdisk.sh
 
 set -u
 
 # --- CONFIGURATION ---
-BASE_DIR="/cm/shared/scripts/net-mapping"
-OUT_DIR="${BASE_DIR}/out/udev_rules/latest"
-INPUT_CSV="${BASE_DIR}/out/manual_inventory.csv"
-PYTHON_GEN="${BASE_DIR}/generate-udev-rules.py"
-COLLECTOR_SCRIPT="${BASE_DIR}/nic-mapping-univ-all-nodes.sh"
+UDEV_ROOT="/cm/shared/scripts/net-mapping/out/udev_rules"
+DEFAULT_SOURCE="${UDEV_ROOT}/latest/cluster_wide_baked.rules"
+IMAGES_ROOT="/cm/images"
+TARGET_FILE="80-cluster-wide-nics.rules"
 
 # Colors
 BLUE='\033[0;34m'
@@ -19,72 +18,58 @@ CYAN='\033[0;36m'
 RED='\033[0;31m'
 NC='\033[0m'
 
-mkdir -p "$OUT_DIR"
+echo -e "${BLUE}[INFO] Querying Bright Cluster Manager for Software Images...${NC}\n"
 
-# Consistent Header with the Collector Script
-echo -e "${BLUE}[INFO] Querying Kubernetes for worker node status...${NC}"
+# 1. Capture raw list
+RAW_LIST=$(cmsh -c "softwareimage; list")
+mapfile -t ALL_IMGS < <(echo "$RAW_LIST" | awk 'NR>2 {print $1}')
 
-# 1. Capture raw kubectl output
-RAW_NODES=$(kubectl get nodes -l node-role.kubernetes.io/worker=)
-mapfile -t ALL_NODES < <(echo "$RAW_NODES" | awk 'NR>1 {print $1}')
+# 2. Display Table
+echo -e "${CYAN}Current Software Image Status:${NC}"
+echo -e "${BLUE}--------------------------------------------------------------------------------------${NC}"
+echo "$RAW_LIST"
+echo -e "${BLUE}--------------------------------------------------------------------------------------${NC}"
 
-echo -e "\n${CYAN}Cluster Worker Node Status:${NC}"
-echo -e "${BLUE}-----------------------------------------------------------------------${NC}"
-echo "$RAW_NODES"
-echo -e "${BLUE}-----------------------------------------------------------------------${NC}"
-
-# 2. SELECTION MENU
-echo -e "${YELLOW}Select Nodes for Rule Generation:${NC}"
-for i in "${!ALL_NODES[@]}"; do
-    node="${ALL_NODES[$i]}"
-    # Check inventory status for the hint
-    inv_hint=$([[ -f "$INPUT_CSV" ]] && grep -q "^${node}," "$INPUT_CSV" && echo -e "${GREEN}(In Inventory)${NC}" || echo -e "${RED}(Missing Data)${NC}")
-    printf "%2d) %-20s %b\n" "$((i+1))" "$node" "$inv_hint"
+# 3. Selection Menu with Active Node Info
+echo -e "${YELLOW}Select images to bake UDEV rules into:${NC}"
+for i in "${!ALL_IMGS[@]}"; do
+    node_count=$(echo "$RAW_LIST" | grep "^${ALL_IMGS[$i]} " | awk '{print $NF}')
+    hint=""
+    [[ "$node_count" -gt 0 ]] && hint=" ${GREEN}(Active: $node_count nodes)${NC}"
+    printf "%2d) %-25s %b\n" "$((i+1))" "${ALL_IMGS[$i]}" "$hint"
 done
-echo -e " a) ALL Nodes with Inventory Data"
-echo -e " q) Quit"
+echo -e " a) ALL Images\n q) Quit"
 
-read -p ">> Selection: " choice
+echo -e "\n${CYAN}Selection (e.g. 1,2 or 'a'):${NC}"
+read -p ">> " choice
 
-SELECTED_NODES=()
-
-# 3. PROCESSING SELECTION
-if [[ "$choice" == "a" ]]; then
-    for node in "${ALL_NODES[@]}"; do
-        [[ -f "$INPUT_CSV" ]] && grep -q "^${node}," "$INPUT_CSV" && SELECTED_NODES+=("$node")
-    done
-elif [[ "$choice" != "q" && -n "$choice" ]]; then
+# --- 4. SELECTION PROCESSING ---
+SELECTED_IMGS=()
+if [[ "$choice" == "a" ]]; then SELECTED_IMGS=("${ALL_IMGS[@]}")
+elif [[ "$choice" == "q" || -z "$choice" ]]; then exit 0
+else
     IFS=',' read -ra ADDR <<< "$choice"
     for idx in "${ADDR[@]}"; do
         idx=$(echo "$idx" | tr -d ' ')
-        node="${ALL_NODES[$((idx-1))]}"
-        
-        # Check for missing data and offer Quick Scan
-        if ! grep -q "^${node}," "$INPUT_CSV" 2>/dev/null; then
-            echo -e "${YELLOW}[WARN]${NC} $node has no inventory data."
-            read -p "Would you like to run a Quick Scan for $node now? (y/n): " do_scan
-            if [[ "$do_scan" == "y" ]]; then
-                bash "$COLLECTOR_SCRIPT" "$node"
-            fi
-        fi
-        
-        # Re-verify after potential scan and add to list
-        grep -q "^${node}," "$INPUT_CSV" 2>/dev/null && SELECTED_NODES+=("$node")
+        [[ "$idx" =~ ^[0-9]+$ ]] && [[ "$idx" -le "${#ALL_IMGS[@]}" ]] && SELECTED_IMGS+=("${ALL_IMGS[$((idx-1))]}")
     done
 fi
 
-# 4. EXECUTION
-if [[ ${#SELECTED_NODES[@]} -gt 0 ]]; then
-    # Prepare a clean filtered CSV for the Python script
-    FILTERED_CSV="${OUT_DIR}/filtered_selection.csv"
-    head -n 1 "$INPUT_CSV" > "$FILTERED_CSV"
-    for n in "${SELECTED_NODES[@]}"; do 
-        grep "^${n}," "$INPUT_CSV" >> "$FILTERED_CSV"
-    done
-    
-    echo -e "\n${BLUE}[INFO] Generating rules for:${NC} ${SELECTED_NODES[*]}"
-    python3 "$PYTHON_GEN" "$FILTERED_CSV" "$OUT_DIR"
-    echo -e "${GREEN}[SUCCESS] UDEV rules generated in $OUT_DIR${NC}"
-else
-    echo -e "${RED}[EXIT] No nodes with data selected. Rules were not updated.${NC}"
+# --- 5. EXECUTION ---
+SOURCE_RULES="${1:-$DEFAULT_SOURCE}"
+if [[ ! -f "$SOURCE_RULES" ]]; then
+    echo -e "${RED}[ERROR] Rules file not found at: $SOURCE_RULES${NC}"; exit 1
 fi
+
+echo -e "\n${BLUE}[INFO] Baking Rules into Selected Images...${NC}"
+for img in "${SELECTED_IMGS[@]}"; do
+    img_path="${IMAGES_ROOT}/${img}"
+    DEST_DIR="${img_path}/etc/udev/rules.d"
+    echo -ne "  --> $img: "
+    sudo mkdir -p "$DEST_DIR"
+    if sudo cp -f "$SOURCE_RULES" "${DEST_DIR}/${TARGET_FILE}"; then
+        echo -e "${GREEN}[OK]${NC}"
+    else
+        echo -e "${RED}[FAILED]${NC}"
+    fi
+done
