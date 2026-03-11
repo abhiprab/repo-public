@@ -31,18 +31,20 @@ run_node() {
     local node=$1
     local node_csv="${TEMP_DIR}/${node}-${DATE_STR}.csv"
     
-    echo "[INFO] (${node}) streaming discovery script..."
+    echo -e "${BLUE}[INFO]${NC} (${node}) injecting discovery engine..."
 
-    # REMOVED -it to prevent TTY garbage/hangs
-    # Added --profile=general to satisfy newer K8s APIs
+    # 1. Encode the local script into a Base64 string
+    local B64_SCRIPT=$(base64 -w 0 < "$LOCAL_ENGINE")
+
+    # 2. Pass the string into the debug pod, decode it, and execute it
+    # We use --profile=general and remove -it for clean output
     if kubectl debug "node/${node}" --quiet --image="$DEBUG_IMAGE" --profile=general -- \
-        chroot /host bash -s -- --csv --print < "$LOCAL_ENGINE" > "$node_csv" 2>/dev/null; then
+        chroot /host bash -c "echo '$B64_SCRIPT' | base64 -d | bash -s -- --csv --print" > "$node_csv" 2>/dev/null; then
         
-        # Check if we got the CSV header 'HOSTNAME'
         if grep -q "HOSTNAME" "$node_csv"; then
             echo -e "${GREEN}[SUCCESS]${NC} (${node}) data captured."
         else
-            echo -e "${RED}[ERROR]${NC} (${node}) captured invalid data. Raw content: $(cat $node_csv)"
+            echo -e "${RED}[ERROR]${NC} (${node}) data invalid or empty. Content: $(cat $node_csv)"
             rm -f "$node_csv"
         fi
     else
