@@ -25,7 +25,7 @@ if [[ ! -f "$INPUT_CSV" ]]; then
     echo -e "${RED}[ERROR] Inventory data is missing!${NC}"
     echo -e "${YELLOW}Path:${NC} $INPUT_CSV"
     echo -e "\n${BLUE}[ACTION REQUIRED]${NC}"
-    echo -e "You must perform an initial hardware scan first."
+    echo -e "You must perform an initial inventory scan first."
     echo -e "Please go back to the Main Menu and choose ${CYAN}Option 2 (Inventory Scan)${NC}."
     echo -e "----------------------------------------------------------------------------"
     exit 1
