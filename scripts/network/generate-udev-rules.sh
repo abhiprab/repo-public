@@ -1,87 +1,96 @@
-#!/usr/bin/env python3
-# generate-udev-rules.sh
-import csv, os, sys
-from collections import defaultdict
+#!/usr/bin/env bash
+# generate-udev-rules-interactive.sh
+# Wraps Python generator with a consistent UI for node selection.
 
-def main(csv_path, out_dir):
-    # Dictionaries to hold data per host
-    # Format: host -> list of (pci, mac, original_iface)
-    super_nics = defaultdict(list)
-    smart_nics = defaultdict(list)
+set -u
 
-    if not os.path.exists(csv_path):
-        print(f"[ERROR] CSV not found: {csv_path}")
-        sys.exit(1)
+# --- CONFIGURATION ---
+BASE_DIR="/cm/shared/scripts/net-mapping"
+OUT_DIR="${BASE_DIR}/out/udev_rules/latest"
+INPUT_CSV="${BASE_DIR}/out/manual_inventory.csv"
+PYTHON_GEN="${BASE_DIR}/generate-udev-rules.py"
 
-    # Path for the single merged file
-    merged_file_path = os.path.join(out_dir, "cluster_wide_baked.rules")
+# Colors
+BLUE='\033[0;34m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+CYAN='\033[0;36m'
+RED='\033[0;31m'
+NC='\033[0m'
+
+mkdir -p "$OUT_DIR"
+
+echo -e "${BLUE}[INFO] Querying Kubernetes for worker node status...${NC}"
+
+# 1. Capture raw kubectl output for display
+RAW_NODES=$(kubectl get nodes -l node-role.kubernetes.io/worker=)
+mapfile -t ALL_NODES < <(echo "$RAW_NODES" | awk 'NR>1 {print $1}')
+
+if [[ ${#ALL_NODES[@]} -eq 0 ]]; then
+    echo -e "${RED}[ERROR] No worker nodes found via kubectl.${NC}"; exit 1
+fi
+
+# 2. Display Node Status Table
+echo -e "\n${CYAN}Cluster Worker Node Status:${NC}"
+echo -e "${BLUE}-----------------------------------------------------------------------${NC}"
+echo "$RAW_NODES"
+echo -e "${BLUE}-----------------------------------------------------------------------${NC}"
+
+# 3. Selection Menu
+echo -e "${YELLOW}Select Nodes to Generate UDEV Rules for:${NC}"
+for i in "${!ALL_NODES[@]}"; do
+    node="${ALL_NODES[$i]}"
+    node_status=$(echo "$RAW_NODES" | grep "^${node} " | awk '{print $2}')
     
-    # Initialize/Clear the merged file
-    with open(merged_file_path, "w") as mf:
-        mf.write("# Cluster-Wide Merged Rules for Image Baking\n")
-        mf.write("# Generated from: " + os.path.basename(csv_path) + "\n\n")
+    # Check if node exists in the CSV inventory
+    inventory_hint=""
+    if grep -q "^${node}," "$INPUT_CSV" 2>/dev/null; then
+        inventory_hint="${GREEN}(In Inventory)${NC}"
+    else
+        inventory_hint="${RED}(Missing from Inventory)${NC}"
+    fi
 
-    with open(csv_path) as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            host = row["HOSTNAME"]
-            # Filter for Physical Functions only
-            if row.get("FUNC") != "PF":
-                continue
-            
-            iface = row["IFACE"]
-            pci = row["PCI"]
-            mac = (row.get("PERM_MAC") or row.get("CURR_MAC")).lower()
-            nic_type = row.get("TYPE", "Generic-NIC")
+    status_hint=""
+    [[ "$node_status" != "Ready" ]] && status_hint=" ${RED}[$node_status]${NC}"
 
-            # Store tuple including original interface name
-            if nic_type == "SuperNIC":
-                super_nics[host].append((pci, mac, iface))
-            elif nic_type == "SmartNIC":
-                smart_nics[host].append((pci, mac, iface))
+    printf "%2d) %-20s %b %b\n" "$((i+1))" "$node" "$inventory_hint" "$status_hint"
+done
+echo -e " a) ALL Nodes in Inventory"
+echo -e " q) Quit"
 
-    all_hosts = sorted(list(set(super_nics.keys()) | set(smart_nics.keys())))
+read -p ">> Selection: " choice
 
-    for host in all_hosts:
-        rule_path = os.path.join(out_dir, f"{host}_nics.rules")
-        
-        # Prepare content for this specific host
-        host_rules = []
-        host_rules.append(f"# Persistent naming for {host}\n")
+# 4. Process Selection
+SELECTED_NODES=()
+if [[ "$choice" == "a" ]]; then
+    # Grab all node names that are actually in the CSV
+    SELECTED_NODES=($(awk -F, 'NR>1 {print $1}' "$INPUT_CSV" | sort -u))
+elif [[ "$choice" == "q" || -z "$choice" ]]; then
+    exit 0
+else
+    IFS=',' read -ra ADDR <<< "$choice"
+    for idx in "${ADDR[@]}"; do
+        idx=$(echo "$idx" | tr -d ' ')
+        if [[ "$idx" =~ ^[0-9]+$ ]] && [ "$idx" -le "${#ALL_NODES[@]}" ]; then
+            SELECTED_NODES+=("${ALL_NODES[$((idx-1))]}")
+        fi
+    done
+fi
 
-        # --- Process SuperNICs (Custom Rail Naming) ---
-        if host in super_nics:
-            host_rules.append("# --- SuperNIC Rail Interfaces ---\n")
-            # Sort by PCI for geographic consistency
-            sorted_super = sorted(super_nics[host], key=lambda x: x[0])
-            for i, (pci, mac, iface) in enumerate(sorted_super):
-                host_rules.append(f'SUBSYSTEM=="net", ACTION=="add", DRIVERS=="?*", ATTR{{address}}=="{mac}", NAME="rail{i}pf"\n')
-            host_rules.append("\n")
+if [[ ${#SELECTED_NODES[@]} -eq 0 ]]; then
+    echo -e "${RED}[ERROR] No nodes selected.${NC}"; exit 1
+fi
 
-        # --- Process SmartNICs (Preserve Existing Names) ---
-        if host in smart_nics:
-            host_rules.append("# --- SmartNIC Management Interfaces (Preserved Names) ---\n")
-            sorted_smart = sorted(smart_nics[host], key=lambda x: x[0])
-            for pci, mac, iface in sorted_smart:
-                # Use 'iface' variable directly to keep ethX/ethY
-                host_rules.append(f'SUBSYSTEM=="net", ACTION=="add", DRIVERS=="?*", ATTR{{address}}=="{mac}", NAME="{iface}"\n')
+# 5. Create a filtered CSV for Python to process
+# This ensures Python only generates rules for the nodes you picked
+FILTERED_CSV="${OUT_DIR}/filtered_selection.csv"
+head -n 1 "$INPUT_CSV" > "$FILTERED_CSV"
+for node in "${SELECTED_NODES[@]}"; do
+    grep "^${node}," "$INPUT_CSV" >> "$FILTERED_CSV" || echo -e "${YELLOW}[WARN]${NC} Node $node has no inventory data."
+done
 
-        # 1. Write the individual node file
-        with open(rule_path, "w") as f:
-            f.writelines(host_rules)
+# 6. Call your Python Script
+echo -e "\n${BLUE}[INFO] Running Python UDEV Generator...${NC}"
+python3 "$PYTHON_GEN" "$FILTERED_CSV" "$OUT_DIR"
 
-        # 2. Append to the single merged file
-        with open(merged_file_path, "a") as mf:
-            mf.write(f"# Host: {host}\n")
-            mf.writelines(host_rules)
-            mf.write("\n" + "="*60 + "\n\n")
-
-        print(f"  [OK] {host}: Generated rules for {len(super_nics.get(host, []))} SuperNICs and {len(smart_nics.get(host, []))} SmartNICs")
-
-    print(f"\n[SUCCESS] Individual rules and merged file 'cluster_wide_baked.rules' created in {out_dir}")
-
-if __name__ == "__main__":
-    if len(sys.argv) < 3:
-        print("Usage: ./generate-udev-rules.sh <input_csv> <output_dir>")
-        sys.exit(1)
-    main(sys.argv[1], sys.argv[2])
+echo -e "\n${GREEN}[SUCCESS] Interaction complete.${NC}"
