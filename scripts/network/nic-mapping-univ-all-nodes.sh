@@ -16,25 +16,25 @@ run_node() {
     local node_csv="${TEMP_DIR}/${node}-${DATE_STR}.csv"
     local script_path="/cm/shared/scripts/net-mapping/nic-mapping-univ.sh"
     
-    echo -e "${BLUE}[INFO]${NC} (${node}) capturing via absolute path..."
+    echo -e "${BLUE}[INFO]${NC} (${node}) capturing data..."
 
-    # We call the script directly via its absolute path inside the chroot.
-    # We remove 'bash -lc' to avoid environment/alias issues.
-    if kubectl debug "node/${node}" -i --quiet --image="$DEBUG_IMAGE" --profile=general -- \
-        chroot /host "$script_path" --csv --print > "$node_csv" 2>/dev/null; then
+    # 1. Run the script on the node (No -i, No -t)
+    # 2. We use 'kubectl exec' style logic inside a debug pod
+    # 3. We use a simpler execution string
+    if kubectl debug "node/${node}" --quiet --image="$DEBUG_IMAGE" --profile=general -- \
+        chroot /host bash -c "$script_path --csv --print" > "$node_csv" 2>/dev/null; then
         
+        # Clean up any TTY/line ending garbage
         sed -i 's/\r//g' "$node_csv"
 
         if [[ -s "$node_csv" ]] && grep -q "HOSTNAME" "$node_csv"; then
             echo -e "${GREEN}[SUCCESS]${NC} (${node}) captured."
         else
-            # DIAGNOSTIC: If it fails, let's see what the pod actually said
-            local err_msg=$(kubectl debug "node/${node}" -i --quiet --image="$DEBUG_IMAGE" --profile=general -- chroot /host "$script_path" --csv --print 2>&1)
-            echo -e "${RED}[ERROR]${NC} (${node}) Failed. Node said: ${err_msg:0:50}..."
+            echo -e "${RED}[ERROR]${NC} (${node}) data was empty. Check if $script_path is executable on the node."
             rm -f "$node_csv"
         fi
     else
-        echo -e "${RED}[ERROR]${NC} (${node}) connection failed."
+        echo -e "${RED}[ERROR]${NC} (${node}) pod execution failed."
     fi
 }
 
