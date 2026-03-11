@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# bake-maintenance-images.sh - Version 1.6
-# Features: Timestamped rotation of blacklist files and granular package logging.
+# bake-maintenance-images.sh - Version 1.7
+# Logic: Skips package sections if arrays are empty to avoid "Failed" output.
 
 set -u
 
@@ -13,10 +13,12 @@ MODPROBE_DIR="etc/modprobe.d"
 BLACKLIST_MODULES=("qedr" "qede" "irdma" "nouveau")
 
 # --- PACKAGES TO REMOVE ---
+# Leave empty () or ("") to skip
 PACKAGES_TO_REMOVE=("ibacm")
 
 # --- PACKAGES TO INSTALL ---
-PACKAGES_TO_INSTALL=("tcpdump" "pciutils" "ethtool")
+# Leave empty () or ("") to skip
+PACKAGES_TO_INSTALL=("")
 
 # Colors
 BLUE='\033[0;34m'
@@ -43,46 +45,47 @@ for img_path in "${worker_images[@]}"; do
         IMG_NAME=$(basename "$img_path")
         echo -e "${BLUE}>>> Image: $IMG_NAME${NC}"
 
-        # --- 1. BLACKLIST ROTATION & WRITE ---
+        # --- 1. BLACKLIST ---
         DEST_DIR="${img_path}/${MODPROBE_DIR}"
         FULL_DEST_PATH="${DEST_DIR}/${BLACKLIST_FILE}"
-        
         sudo mkdir -p "$DEST_DIR"
         
-        # Check if the file already exists and RENAME it
         if [[ -f "$FULL_DEST_PATH" ]]; then
-            # Generate a specific timestamp for this rotation
             OLD_TS=$(date +%F-%H%M%S)
-            NEW_BACKUP_NAME="${FULL_DEST_PATH}.${OLD_TS}.old"
-            
-            echo -e "    ${YELLOW}[ROTATE]${NC} Existing blacklist found. Archiving to: $(basename "$NEW_BACKUP_NAME")"
-            sudo mv "$FULL_DEST_PATH" "$NEW_BACKUP_NAME"
+            sudo mv "$FULL_DEST_PATH" "${FULL_DEST_PATH}.${OLD_TS}.old"
+            echo -e "    ${YELLOW}[ROTATE]${NC} Archived existing blacklist."
+        fi
+        echo -e "$FILE_CONTENT" | sudo tee "$FULL_DEST_PATH" > /dev/null
+        echo -e "    ${GREEN}[OK]${NC} Blacklist applied."
+
+        # --- 2. PACKAGE REMOVAL (Only if array is not empty) ---
+        if [[ ${#PACKAGES_TO_REMOVE[@]} -gt 0 && -n "${PACKAGES_TO_REMOVE[0]}" ]]; then
+            for pkg in "${PACKAGES_TO_REMOVE[@]}"; do
+                if [[ -n "$pkg" ]]; then
+                    echo -ne "    ${YELLOW}[REMOVE]${NC} $pkg... "
+                    if sudo yum --installroot="$img_path" -y remove "$pkg" &>/dev/null; then
+                        echo -e "${GREEN}Done.${NC}"
+                    else
+                        echo -e "${RED}Not present/Skipped.${NC}"
+                    fi
+                fi
+            done
         fi
 
-        # Write the new configuration
-        echo -e "$FILE_CONTENT" | sudo tee "$FULL_DEST_PATH" > /dev/null
-        echo -e "    ${GREEN}[OK]${NC} New blacklist applied: ${BLACKLIST_MODULES[*]}"
-
-        # --- 2. PACKAGE REMOVAL ---
-        for pkg in "${PACKAGES_TO_REMOVE[@]}"; do
-            echo -ne "    ${YELLOW}[REMOVE]${NC} $pkg... "
-            if sudo yum --installroot="$img_path" -y remove "$pkg" &>/dev/null; then
-                echo -e "${GREEN}Done.${NC}"
-            else
-                echo -e "${RED}Not present/Failed.${NC}"
-            fi
-        done
-
-        # --- 3. PACKAGE INSTALLATION ---
-        for pkg in "${PACKAGES_TO_INSTALL[@]}"; do
-            echo -ne "    ${CYAN}[INSTALL]${NC} $pkg... "
-            if sudo yum --installroot="$img_path" -y install "$pkg" &>/dev/null; then
-                echo -e "${GREEN}Done.${NC}"
-            else
-                echo -e "${RED}Failed.${NC}"
-            fi
-        done
+        # --- 3. PACKAGE INSTALLATION (Only if array is not empty) ---
+        if [[ ${#PACKAGES_TO_INSTALL[@]} -gt 0 && -n "${PACKAGES_TO_INSTALL[0]}" ]]; then
+            for pkg in "${PACKAGES_TO_INSTALL[@]}"; do
+                if [[ -n "$pkg" ]]; then
+                    echo -ne "    ${CYAN}[INSTALL]${NC} $pkg... "
+                    if sudo yum --installroot="$img_path" -y install "$pkg" &>/dev/null; then
+                        echo -e "${GREEN}Done.${NC}"
+                    else
+                        echo -e "${RED}Failed.${NC}"
+                    fi
+                fi
+            done
+        fi
     fi
 done
 
-echo -e "\n${GREEN}[SUCCESS] All maintenance tasks complete.${NC}"
+echo -e "\n${GREEN}[SUCCESS] Image maintenance complete.${NC}"
