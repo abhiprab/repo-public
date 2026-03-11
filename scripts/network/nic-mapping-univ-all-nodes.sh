@@ -1,9 +1,5 @@
 #!/usr/bin/env bash
 # nic-mapping-univ-all-nodes.sh
-# 1. Collects NIC data from all K8s workers in parallel.
-# 2. Saves individual node CSVs.
-# 3. Merges them into one master CSV.
-
 set -euo pipefail
 
 # --- CONFIGURATION ---
@@ -15,22 +11,15 @@ TEMP_DIR="${OUT_DIR}/tmp_raw"
 ENGINE_PATH="/cm/shared/scripts/net-mapping/nic-mapping-univ.sh"
 DEBUG_IMAGE="registry.k8s.io/e2e-test-images/busybox:1.29"
 
-usage() {
-    echo "Usage: $0 --out <file.csv> --parallel <N>"
-    exit 1
-}
-
-# --- PARSE ARGS ---
+# Parse Args
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --out) OUT_FILE="$2"; shift 2 ;;
         --parallel) PARALLEL="$2"; shift 2 ;;
-        *) usage ;;
+        *) shift 1 ;;
     esac
 done
 
-# Ensure directories exist
-mkdir -p "$OUT_DIR"
 mkdir -p "$TEMP_DIR"
 
 # --- PHASE 1: COLLECT DATA ---
@@ -38,52 +27,58 @@ NODES=$(kubectl get nodes -l node-role.kubernetes.io/worker= -o jsonpath='{.item
 
 run_node() {
     local node=$1
-    # Individual file saved with hostname and timestamp
     local node_csv="${TEMP_DIR}/${node}-${DATE_STR}.csv"
     
-    echo "[INFO] (${node}) collecting details..."
-    
-    kubectl debug "node/${node}" -it --quiet --image="$DEBUG_IMAGE" -- \
-        chroot /host bash -c "sudo $ENGINE_PATH --csv --out $node_csv" > /dev/null 2>&1
-    
-    if [[ -s "$node_csv" ]]; then
-        echo "[SUCCESS] (${node}) data captured."
+    # We use a subshell to capture the output of the debug pod
+    # and write it directly from the master node to ensure the file is created.
+    echo "[INFO] (${node}) starting collection..."
+
+    # Execute and capture the STDOUT from the debug pod directly to our local disk
+    # This bypasses the need for the node to have write access to the shared folder
+    if kubectl debug "node/${node}" -it --quiet --image="$DEBUG_IMAGE" -- \
+        chroot /host bash -c "sudo $ENGINE_PATH --csv --print" > "$node_csv" 2>/dev/null; then
+        
+        if [[ -s "$node_csv" ]]; then
+            echo "[SUCCESS] (${node}) data captured."
+        else
+            echo "[ERROR] (${node}) returned empty data."
+            rm -f "$node_csv"
+        fi
     else
-        echo "[ERROR] (${node}) failed to capture data."
+        echo "[ERROR] (${node}) connection failed."
+        rm -f "$node_csv"
     fi
 }
 
 export -f run_node
 export TEMP_DIR ENGINE_PATH DEBUG_IMAGE DATE_STR
 
-echo "$NODES" | tr ' ' '\n' | xargs -n 1 -P "$PARALLEL" -I {} bash -c 'run_node "{}"'
+# FIXED XARGS: Removed -n 1 to resolve the conflict with -I
+echo "$NODES" | tr ' ' '\n' | xargs -I {} -P "$PARALLEL" bash -c 'run_node "{}"'
 
 # --- PHASE 2: MERGE DATA ---
 echo "[INFO] Merging per-node files into $OUT_FILE..."
 
-# Get the list of individual CSVs just created
-mapfile -t FILES < <(ls -1 "$TEMP_DIR"/*-${DATE_STR}.csv 2>/dev/null | sort)
+# Check if any files were actually created
+shopt -s nullglob
+FILES=("$TEMP_DIR"/*-"$DATE_STR".csv)
 
 if [[ ${#FILES[@]} -eq 0 ]]; then
-    echo "ERROR: No individual node CSVs found to merge." >&2
+    echo "ERROR: No individual node CSVs found in $TEMP_DIR. Check if kubectl debug is permitted." >&2
     exit 1
 fi
 
 # Write header from first file
 head -n 1 "${FILES[0]}" > "$OUT_FILE"
 
-# Append rows from all files (skip headers)
+# Append rows (skipping header)
 for f in "${FILES[@]}"; do
-    if [ -s "$f" ]; then
-        tail -n +2 "$f" >> "$OUT_FILE"
-    fi
+    tail -n +2 "$f" >> "$OUT_FILE"
 done
 
-# --- PHASE 3: ORGANIZE INDIVIDUAL FILES ---
-# Instead of deleting them, we keep them in a subfolder for reference
+# Organize reports
 NODE_OUT_DIR="${OUT_DIR}/node_reports/${DATE_STR}"
 mkdir -p "$NODE_OUT_DIR"
-mv "$TEMP_DIR"/*-${DATE_STR}.csv "$NODE_OUT_DIR/"
+mv "$TEMP_DIR"/*-"$DATE_STR".csv "$NODE_OUT_DIR/"
 
-echo "[OK] Individual node reports saved to: $NODE_OUT_DIR"
-echo "[OK] Master cluster inventory created: $OUT_FILE"
+echo "[OK] Master cluster inventory: $OUT_FILE"
