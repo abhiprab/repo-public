@@ -24,25 +24,25 @@ NODES=$(kubectl get nodes -l node-role.kubernetes.io/worker= -o jsonpath='{.item
 run_node() {
     local node=$1
     local node_csv="${TEMP_DIR}/${node}-${DATE_STR}.csv"
-    
-    echo -e "${BLUE}[INFO]${NC} (${node}) executing via shared mount..."
+    # This is the path as seen by the worker node's host OS
+    local host_script="/cm/shared/scripts/net-mapping/nic-mapping-univ.sh"
 
-    # 1. Use -t to force a TTY (needed for many sudo configs)
-    # 2. Use -o BatchMode=yes to fail fast instead of hanging on a password prompt
-    if ssh -t -o BatchMode=yes -o StrictHostKeyChecking=no "$node" \
-        "sudo ${SHARED_ENGINE} --csv --print" > "$node_csv" 2>/dev/null; then
-        
-        # Strip any DOS line endings or TTY artifacts that might come back
-        sed -i 's/\r//g' "$node_csv"
+    echo -e "${BLUE}[INFO]${NC} (${node}) executing via K8s host path..."
+
+    # 1. We use --profile=general to get host access
+    # 2. We chroot into /host so the script sees the real NICs
+    # 3. We run the script directly from the shared mount
+    if kubectl debug "node/${node}" --quiet --image="$DEBUG_IMAGE" --profile=general -- \
+        chroot /host /bin/bash "$host_script" --csv --print > "$node_csv" 2>/dev/null; then
 
         if grep -q "HOSTNAME" "$node_csv"; then
             echo -e "${GREEN}[SUCCESS]${NC} (${node}) data captured."
         else
-            echo -e "${RED}[ERROR]${NC} (${node}) captured data invalid. Check sudoers on node."
+            echo -e "${RED}[ERROR]${NC} (${node}) captured invalid data. Check if mount exists on node."
             rm -f "$node_csv"
         fi
     else
-        echo -e "${RED}[ERROR]${NC} (${node}) SSH/Sudo failed. Verify 'ssh $node' works without a password."
+        echo -e "${RED}[ERROR]${NC} (${node}) kubectl debug failed for this node."
     fi
 }
 
