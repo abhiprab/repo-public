@@ -31,30 +31,24 @@ run_node() {
     local node=$1
     local node_csv="${TEMP_DIR}/${node}-${DATE_STR}.csv"
     
-    echo "[INFO] (${node}) preparing and collecting..."
+    echo "[INFO] (${node}) streaming discovery script..."
 
-    # 1. Push the engine to the node's local /tmp
-    # We use --profile=general to stop the legacy warning
-    kubectl debug "node/${node}" --image="$DEBUG_IMAGE" --profile=general --quiet -- \
-        bash -c "cat > $REMOTE_TMP_EXE" < "$LOCAL_ENGINE" 2>/dev/null
-
-    # 2. Execute from local /tmp
-    # Added --profile=general here as well to keep the execution silent
+    # 1. We pipe the local script into 'bash -s'
+    # 2. We skip chmod because we are executing the stream directly
+    # 3. We ensure the output only contains the CSV data
     if kubectl debug "node/${node}" -it --quiet --image="$DEBUG_IMAGE" --profile=general -- \
-        chroot /host bash -c "chmod +x $REMOTE_TMP_EXE && sudo $REMOTE_TMP_EXE --csv --print" > "$node_csv" 2>/dev/null; then
+        chroot /host bash -s -- --csv --print < "$LOCAL_ENGINE" > "$node_csv" 2>/dev/null; then
         
-        if [[ -s "$node_csv" ]]; then
+        # 4. VALIDATION: Check if the first line is actually a CSV header
+        if head -n 1 "$node_csv" | grep -q "HOSTNAME"; then
             echo "[SUCCESS] (${node}) data captured."
         else
-            echo "[ERROR] (${node}) returned empty data."
+            echo "[ERROR] (${node}) captured error instead of data. Check node sudoers."
             rm -f "$node_csv"
         fi
     else
-        echo "[ERROR] (${node}) execution failed."
+        echo "[ERROR] (${node}) connection failed."
     fi
-
-    # 3. Cleanup the remote temp file silently
-    kubectl debug "node/${node}" --image="$DEBUG_IMAGE" --profile=general --quiet -- rm -f "$REMOTE_TMP_EXE" > /dev/null 2>&1
 }
 
 export -f run_node
