@@ -8,11 +8,14 @@ OUT_DIR="/cm/shared/scripts/net-mapping/out"
 OUT_FILE="${OUT_DIR}/nic-inventory-merged-${DATE_STR}.csv"
 PARALLEL=8
 TEMP_DIR="${OUT_DIR}/tmp_raw"
-# Local path on jumpbox to the engine
 LOCAL_ENGINE="/cm/shared/scripts/net-mapping/nic-mapping-univ.sh"
-# Temporary path on the worker node
-REMOTE_TMP_EXE="/tmp/nic-mapping-univ.sh"
 DEBUG_IMAGE="registry.k8s.io/e2e-test-images/busybox:1.29"
+
+# Colors for xargs subshell
+export GREEN='\033[0;32m'
+export BLUE='\033[0;34m'
+export RED='\033[0;31m'
+export NC='\033[0m'
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -30,46 +33,47 @@ NODES=$(kubectl get nodes -l node-role.kubernetes.io/worker= -o jsonpath='{.item
 run_node() {
     local node=$1
     local node_csv="${TEMP_DIR}/${node}-${DATE_STR}.csv"
-    local host_exe="/usr/local/bin/ndt-engine.sh"
-    
+    # We write to a path the host can see and execute from
+    local host_path="/usr/local/bin/ndt-engine.sh"
+
     echo -e "${BLUE}[INFO]${NC} (${node}) pushing engine to host storage..."
 
-    # 1. Pipe the local script directly into a file on the HOST filesystem
-    # We use 'cat >' inside the chroot to ensure the host OS actually owns the file
+    # 1. Capture the script content and write it directly to the host filesystem
+    # We pipe the local file through kubectl into a 'cat' command on the node
     cat "$LOCAL_ENGINE" | kubectl debug "node/${node}" --quiet --image="$DEBUG_IMAGE" --profile=general -- \
-        chroot /host bash -c "cat > $host_exe && chmod +x $host_exe" >/dev/null 2>&1
+        chroot /host bash -c "cat > $host_path && chmod +x $host_path" >/dev/null 2>&1
 
-    # 2. Execute from the host path
+    # 2. Execute the script from the host path
     if kubectl debug "node/${node}" --quiet --image="$DEBUG_IMAGE" --profile=general -- \
-        chroot /host bash -c "$host_exe --csv --print" > "$node_csv" 2>/dev/null; then
-        
+        chroot /host bash -c "$host_path --csv --print" > "$node_csv" 2>/dev/null; then
+
         if grep -q "HOSTNAME" "$node_csv"; then
             echo -e "${GREEN}[SUCCESS]${NC} (${node}) data captured."
         else
-            echo -e "${RED}[ERROR]${NC} (${node}) output was empty or invalid."
+            echo -e "${RED}[ERROR]${NC} (${node}) failed to capture CSV data."
             rm -f "$node_csv"
         fi
     else
         echo -e "${RED}[ERROR]${NC} (${node}) execution failed."
     fi
 
-    # 3. Cleanup host filesystem
+    # 3. Cleanup: Remove the script from the node's host filesystem
     kubectl debug "node/${node}" --quiet --image="$DEBUG_IMAGE" --profile=general -- \
-        chroot /host rm -f "$host_exe" >/dev/null 2>&1
+        chroot /host rm -f "$host_path" >/dev/null 2>&1
 }
 
 export -f run_node
-export TEMP_DIR LOCAL_ENGINE REMOTE_TMP_EXE DEBUG_IMAGE DATE_STR
+export TEMP_DIR LOCAL_ENGINE DEBUG_IMAGE DATE_STR
 
 echo "$NODES" | tr ' ' '\n' | xargs -I {} -P "$PARALLEL" bash -c 'run_node "{}"'
 
-# --- PHASE 2: MERGE DATA (Same logic as before) ---
-echo "[INFO] Merging results into $OUT_FILE..."
+# --- PHASE 2: MERGE DATA ---
+echo -e "${BLUE}[INFO] Merging results into $OUT_FILE...${NC}"
 shopt -s nullglob
 FILES=("$TEMP_DIR"/*-"$DATE_STR".csv)
 
 if [[ ${#FILES[@]} -eq 0 ]]; then
-    echo "ERROR: No data captured. Check kubectl permissions." >&2
+    echo -e "${RED}ERROR: No data captured. Check kubectl permissions.${NC}" >&2
     exit 1
 fi
 
@@ -83,4 +87,4 @@ NODE_OUT_DIR="${OUT_DIR}/node_reports/${DATE_STR}"
 mkdir -p "$NODE_OUT_DIR"
 mv "$TEMP_DIR"/*-"$DATE_STR".csv "$NODE_OUT_DIR/"
 
-echo "[OK] Merged inventory: $OUT_FILE"
+echo -e "${GREEN}[OK] Merged inventory: $OUT_FILE${NC}"
