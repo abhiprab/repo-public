@@ -40,7 +40,8 @@ mapfile -t ALL_NODES < <(echo "$RAW_NODES" | awk 'NR>1 {print $1}')
 # Check if ANY of these nodes exist in the CSV for a second-level hard gate
 FOUND_ANY=0
 for node in "${ALL_NODES[@]}"; do
-    if grep -q "^${node}," "$INPUT_CSV" 2>/dev/null; then
+    # SANITIZED CHECK: We strip carriage returns (\r) from the CSV content during the search
+    if tr -d '\r' < "$INPUT_CSV" | grep -q "^${node}," 2>/dev/null; then
         FOUND_ANY=1
         break
     fi
@@ -49,9 +50,12 @@ done
 if [[ $FOUND_ANY -eq 0 ]]; then
     echo -e "${RED}[ERROR] No inventory data found for any active worker nodes!${NC}"
     echo -e "${YELLOW}Path:${NC} $INPUT_CSV"
+    echo -e "\n${CYAN}Debug Info:${NC}"
+    echo -e "  K8s Node Sample: ${ALL_NODES[0]}"
+    echo -e "  CSV First Entry: $(tail -n +2 "$INPUT_CSV" | head -n 1 | cut -d',' -f1)"
     echo -e "\n${BLUE}[ACTION REQUIRED]${NC}"
-    echo -e "The inventory file exists but contains no data for these nodes."
-    echo -e "Please go back to the Main Menu and choose ${CYAN}Option 2 (Inventory Scan)${NC}."
+    echo -e "The inventory file exists but the names are not matching exactly."
+    echo -e "Please ensure hostnames in K8s match the first column of your CSV."
     echo -e "----------------------------------------------------------------------------"
     exit 1
 fi
