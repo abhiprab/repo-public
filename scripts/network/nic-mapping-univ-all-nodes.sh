@@ -30,32 +30,32 @@ NODES=$(kubectl get nodes -l node-role.kubernetes.io/worker= -o jsonpath='{.item
 run_node() {
     local node=$1
     local node_csv="${TEMP_DIR}/${node}-${DATE_STR}.csv"
-    local remote_exe="/tmp/nic-mapping-univ.sh"
+    local host_exe="/usr/local/bin/ndt-engine.sh"
     
-    echo -e "${BLUE}[INFO]${NC} (${node}) staging script via kubectl cp..."
+    echo -e "${BLUE}[INFO]${NC} (${node}) pushing engine to host storage..."
 
-    # 1. Copy the script to the node's local /tmp directory
-    # We use -c to specify the container name if needed, but usually not required for debug pods
-    kubectl cp "$LOCAL_ENGINE" "${node}:${remote_exe}" >/dev/null 2>&1
+    # 1. Pipe the local script directly into a file on the HOST filesystem
+    # We use 'cat >' inside the chroot to ensure the host OS actually owns the file
+    cat "$LOCAL_ENGINE" | kubectl debug "node/${node}" --quiet --image="$DEBUG_IMAGE" --profile=general -- \
+        chroot /host bash -c "cat > $host_exe && chmod +x $host_exe" >/dev/null 2>&1
 
-    # 2. Execute the script from the local path
-    # We use 'chroot /host' so the script sees the real hardware /sys/class/net
+    # 2. Execute from the host path
     if kubectl debug "node/${node}" --quiet --image="$DEBUG_IMAGE" --profile=general -- \
-        chroot /host /bin/bash "$remote_exe" --csv --print > "$node_csv" 2>/dev/null; then
+        chroot /host bash -c "$host_exe --csv --print" > "$node_csv" 2>/dev/null; then
         
         if grep -q "HOSTNAME" "$node_csv"; then
             echo -e "${GREEN}[SUCCESS]${NC} (${node}) data captured."
         else
-            echo -e "${RED}[ERROR]${NC} (${node}) invalid output. Check node /tmp permissions."
+            echo -e "${RED}[ERROR]${NC} (${node}) output was empty or invalid."
             rm -f "$node_csv"
         fi
     else
         echo -e "${RED}[ERROR]${NC} (${node}) execution failed."
     fi
 
-    # 3. Cleanup: Remove the script from the node
+    # 3. Cleanup host filesystem
     kubectl debug "node/${node}" --quiet --image="$DEBUG_IMAGE" --profile=general -- \
-        rm -f "/host${remote_exe}" >/dev/null 2>&1
+        chroot /host rm -f "$host_exe" >/dev/null 2>&1
 }
 
 export -f run_node
