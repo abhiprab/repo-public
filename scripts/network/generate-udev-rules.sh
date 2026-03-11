@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# generate-udev-rules.sh - Version 1.7
-# Hard-gate: Aborts immediately if no selected nodes have inventory data.
+# generate-udev-rules.sh - Version 1.8
+# Hard-gate: Aborts with standardized UI error if inventory is missing.
 
 set -u
 
@@ -20,11 +20,14 @@ NC='\033[0m'
 
 mkdir -p "$OUT_DIR"
 
-# --- 1. PRE-FLIGHT CHECK (FILE & CONTENT) ---
+# --- 1. PRE-FLIGHT CHECK (MATCHING BAKE SCRIPT UI) ---
 if [[ ! -f "$INPUT_CSV" ]]; then
     echo -e "${RED}[ERROR] Inventory database is missing!${NC}"
+    echo -e "${YELLOW}Path:${NC} $INPUT_CSV"
     echo -e "\n${BLUE}[ACTION REQUIRED]${NC}"
-    echo -e "You must perform a hardware scan first (Option 2)."
+    echo -e "You must perform an initial hardware scan first."
+    echo -e "Please go back to the Main Menu and choose ${CYAN}Option 2 (Inventory Scan)${NC}."
+    echo -e "----------------------------------------------------------------------------"
     exit 1
 fi
 
@@ -33,7 +36,7 @@ echo -e "${BLUE}[INFO] Querying Kubernetes for worker node status...${NC}"
 RAW_NODES=$(kubectl get nodes -l node-role.kubernetes.io/worker=)
 mapfile -t ALL_NODES < <(echo "$RAW_NODES" | awk 'NR>1 {print $1}')
 
-# Check if ANY of these nodes exist in the CSV
+# Check if ANY of these nodes exist in the CSV for a second-level hard gate
 FOUND_ANY=0
 for node in "${ALL_NODES[@]}"; do
     if grep -q "^${node}," "$INPUT_CSV" 2>/dev/null; then
@@ -42,17 +45,17 @@ for node in "${ALL_NODES[@]}"; do
     fi
 done
 
-# --- 3. THE "HARD GATE" EXIT ---
 if [[ $FOUND_ANY -eq 0 ]]; then
-    echo -e "\n${RED}[ERROR] No inventory data found for any active worker nodes!${NC}"
+    echo -e "${RED}[ERROR] No inventory data found for any active worker nodes!${NC}"
     echo -e "${YELLOW}Path:${NC} $INPUT_CSV"
     echo -e "\n${BLUE}[ACTION REQUIRED]${NC}"
-    echo -e "You must scan these nodes using ${CYAN}Option 2${NC} before you can generate rules."
+    echo -e "The inventory file exists but contains no data for these nodes."
+    echo -e "Please go back to the Main Menu and choose ${CYAN}Option 2 (Inventory Scan)${NC}."
     echo -e "----------------------------------------------------------------------------"
     exit 1
 fi
 
-# --- 4. SELECTION MENU (Only reaches here if some data exists) ---
+# --- 3. SELECTION MENU (If data exists) ---
 echo -e "\n${CYAN}Cluster Worker Node Status:${NC}"
 echo -e "${BLUE}-----------------------------------------------------------------------${NC}"
 echo "$RAW_NODES"
@@ -69,6 +72,4 @@ echo -e " q) Quit"
 
 read -p ">> Selection: " choice
 
-# --- 5. PROCESSING ---
-SELECTED_NODES=()
-# ... (Processing logic remains same as 1.6) ...
+# ... (Rest of processing logic) ...
