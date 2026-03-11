@@ -1,0 +1,85 @@
+#!/usr/bin/env bash
+# node-image-update.sh - Version 1.0
+# Interactive selection to trigger 'imageupdate' via CMSH for worker nodes.
+
+set -u
+
+# --- CONFIGURATION ---
+# Colors
+BLUE='\033[0;34m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+CYAN='\033[0;36m'
+RED='\033[0;31m'
+NC='\033[0m'
+
+# --- 1. NODE STATUS QUERY ---
+echo -e "${BLUE}[INFO] Querying Kubernetes for worker node status...${NC}"
+RAW_NODES=$(kubectl get nodes -l node-role.kubernetes.io/worker=)
+mapfile -t ALL_NODES < <(echo "$RAW_NODES" | awk 'NR>1 {print $1}')
+
+if [[ ${#ALL_NODES[@]} -eq 0 ]]; then
+    echo -e "${RED}[ERROR] No worker nodes found via kubectl.${NC}"
+    exit 1
+fi
+
+# --- 2. DISPLAY STATUS TABLE ---
+echo -e "\n${CYAN}Cluster Worker Node Status:${NC}"
+echo -e "${BLUE}-----------------------------------------------------------------------${NC}"
+echo "$RAW_NODES"
+echo -e "${BLUE}-----------------------------------------------------------------------${NC}"
+
+# --- 3. SELECTION MENU ---
+echo -e "${YELLOW}Select Nodes to trigger Image Update (cmsh device imageupdate):${NC}"
+for i in "${!ALL_NODES[@]}"; do
+    node="${ALL_NODES[$i]}"
+    # Parse status to show if node is Ready
+    node_status=$(echo "$RAW_NODES" | grep "^${node} " | awk '{print $2}')
+    hint=$([[ "$node_status" == "Ready" ]] && echo -e "${GREEN}(Ready)${NC}" || echo -e "${RED}($node_status)${NC}")
+    
+    printf "%2d) %-20s %b\n" "$((i+1))" "$node" "$hint"
+done
+echo -e " a) ALL Worker Nodes"
+echo -e " q) Quit"
+
+read -p ">> Selection (e.g., 1,2 or 'a'): " choice
+
+# --- 4. SELECTION PROCESSING ---
+SELECTED_NODES=()
+
+if [[ "$choice" == "a" ]]; then
+    SELECTED_NODES=("${ALL_NODES[@]}")
+elif [[ "$choice" == "q" || -z "$choice" ]]; then
+    echo -e "${BLUE}Action cancelled.${NC}"
+    exit 0
+else
+    # Parse comma-separated input
+    IFS=',' read -ra ADDR <<< "$choice"
+    for idx in "${ADDR[@]}"; do
+        idx=$(echo "$idx" | tr -d ' ') # Remove whitespace
+        if [[ "$idx" =~ ^[0-9]+$ ]] && [ "$idx" -le "${#ALL_NODES[@]}" ] && [ "$idx" -gt 0 ]; then
+            SELECTED_NODES+=("${ALL_NODES[$((idx-1))]}")
+        fi
+    done
+fi
+
+# Final check before execution
+if [[ ${#SELECTED_NODES[@]} -eq 0 ]]; then
+    echo -e "${RED}[ERROR] No valid nodes selected.${NC}"
+    exit 1
+fi
+
+# --- 5. EXECUTION ---
+echo -e "\n${BLUE}[INFO] Sending Image Update signals via CMSH...${NC}"
+for node in "${SELECTED_NODES[@]}"; do
+    echo -ne "  --> $node: "
+    # Execution of the Bright Cluster Manager command
+    if cmsh -c "device; imageupdate $node" &>/dev/null; then
+        echo -e "${GREEN}[OK]${NC} Update task initiated."
+    else
+        echo -e "${RED}[FAILED]${NC} CMSH error."
+    fi
+done
+
+echo -e "\n${GREEN}[SUCCESS] Image update sequence complete.${NC}"
+echo -e "${YELLOW}[NOTE]${NC} Nodes will now sync with their assigned software images in the background."
