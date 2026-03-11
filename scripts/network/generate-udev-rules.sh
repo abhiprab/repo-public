@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# generate-udev-rules.sh - Version 1.3
-# Interactive Rule Generator with consistent worker node status header.
+# generate-udev-rules.sh - Version 1.4
+# Interactive Rule Generator with "Quick Scan" workflow note.
 
 set -u
 
@@ -21,7 +21,6 @@ NC='\033[0m'
 
 mkdir -p "$OUT_DIR"
 
-# Consistent Header with the Collector Script
 echo -e "${BLUE}[INFO] Querying Kubernetes for worker node status...${NC}"
 
 # 1. Capture raw kubectl output
@@ -37,12 +36,15 @@ echo -e "${BLUE}----------------------------------------------------------------
 echo -e "${YELLOW}Select Nodes for Rule Generation:${NC}"
 for i in "${!ALL_NODES[@]}"; do
     node="${ALL_NODES[$i]}"
-    # Check inventory status for the hint
     inv_hint=$([[ -f "$INPUT_CSV" ]] && grep -q "^${node}," "$INPUT_CSV" && echo -e "${GREEN}(In Inventory)${NC}" || echo -e "${RED}(Missing Data)${NC}")
     printf "%2d) %-20s %b\n" "$((i+1))" "$node" "$inv_hint"
 done
 echo -e " a) ALL Nodes with Inventory Data"
 echo -e " q) Quit"
+
+# --- THE ADDED NOTE ---
+echo -e "\n${YELLOW}[NOTE]${NC} Nodes marked as ${RED}(Missing Data)${NC} will trigger a quick hardware scan"
+echo -e "       to build inventory before rules are generated."
 
 read -p ">> Selection: " choice
 
@@ -59,30 +61,25 @@ elif [[ "$choice" != "q" && -n "$choice" ]]; then
         idx=$(echo "$idx" | tr -d ' ')
         node="${ALL_NODES[$((idx-1))]}"
         
-        # Check for missing data and offer Quick Scan
         if ! grep -q "^${node}," "$INPUT_CSV" 2>/dev/null; then
-            echo -e "${YELLOW}[WARN]${NC} $node has no inventory data."
-            read -p "Would you like to run a Quick Scan for $node now? (y/n): " do_scan
-            if [[ "$do_scan" == "y" ]]; then
-                bash "$COLLECTOR_SCRIPT" "$node"
-            fi
+            echo -e "${YELLOW}[WARN]${NC} $node has no inventory data. Initiating scan..."
+            # Auto-calling the collector for this node
+            bash "$COLLECTOR_SCRIPT" "$node"
         fi
         
-        # Re-verify after potential scan and add to list
         grep -q "^${node}," "$INPUT_CSV" 2>/dev/null && SELECTED_NODES+=("$node")
     done
 fi
 
 # 4. EXECUTION
 if [[ ${#SELECTED_NODES[@]} -gt 0 ]]; then
-    # Prepare a clean filtered CSV for the Python script
     FILTERED_CSV="${OUT_DIR}/filtered_selection.csv"
     head -n 1 "$INPUT_CSV" > "$FILTERED_CSV"
     for n in "${SELECTED_NODES[@]}"; do 
         grep "^${n}," "$INPUT_CSV" >> "$FILTERED_CSV"
     done
     
-    echo -e "\n${BLUE}[INFO] Generating rules for:${NC} ${SELECTED_NODES[*]}"
+    echo -e "\n${BLUE}[INFO] Generating rules for selected nodes...${NC}"
     python3 "$PYTHON_GEN" "$FILTERED_CSV" "$OUT_DIR"
     echo -e "${GREEN}[SUCCESS] UDEV rules generated in $OUT_DIR${NC}"
 else
