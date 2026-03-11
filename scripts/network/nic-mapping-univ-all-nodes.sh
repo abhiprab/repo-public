@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# nic-mapping-univ-all-nodes.sh - Version 6.0
+# nic-mapping-univ-all-nodes.sh - Version 6.1
 set -uo pipefail
 
 # --- CONFIGURATION ---
@@ -76,7 +76,7 @@ export SCRIPT_ON_NODE TEMP_DIR DATE_STR
 
 printf "%s\n" "${SELECTED_NODES[@]}" | xargs -I{} -P 8 bash -c 'run_node "{}"'
 
-# --- MERGE (Smart Merge: If single node, update existing CSV; if all, overwrite) ---
+# --- MERGE & FINALIZATION ---
 echo -e "\n${BLUE}[INFO] Finalizing Inventory...${NC}"
 shopt -s nullglob
 files=( "$TEMP_DIR"/*"${DATE_STR}".csv )
@@ -86,12 +86,30 @@ if [[ ${#files[@]} -gt 0 ]]; then
         head -n 1 "${files[0]}" > "$OUT_FILE"
     fi
     for f in "${files[@]}"; do
-        node_name=$(basename "$f" | cut -d'-' -f1-3)
-        # Remove old entry for this node if it exists to prevent duplicates
+        # Improved node name parsing to handle hostnames with various patterns
+        node_name=$(basename "$f" | rev | cut -d'-' -f3- | rev)
         sed -i "/^$node_name,/d" "$OUT_FILE"
         tail -n +2 "$f" >> "$OUT_FILE"
     done
-    echo -e "${GREEN}[OK] Inventory Updated.${NC}"
+
+    # --- NEW SUMMARY OUTPUT ---
+    echo -e "\n${BLUE}==============================================================${NC}"
+    echo -e "${GREEN}[SUCCESS] Inventory Created Successfully!${NC}"
+    echo -e "${BLUE}==============================================================${NC}"
+
+    echo -e "${YELLOW}Generated Files & Paths:${NC}"
+    echo -e "  ${CYAN}Master CSV:${NC} $OUT_FILE"
+    echo -e "  ${CYAN}Raw CSVs   :${NC} ${TEMP_DIR}/*-${DATE_STR}.csv"
+
+    echo -e "\n${CYAN}Current Inventory Summary:${NC}"
+    echo -e "--------------------------------------------------------------"
+    NODE_COUNT=$(tail -n +2 "$OUT_FILE" | cut -d',' -f1 | sort -u | wc -l)
+    echo -e "  Total Nodes in the folder: ${GREEN}${NODE_COUNT}${NC}"
+    echo -e "  Last Updated           : $(date '+%Y-%m-%d %H:%M:%S')"
+    echo -e "--------------------------------------------------------------"
+
+    echo -e "\n${YELLOW}[NEXT STEP]${NC} You can now proceed to ${CYAN}Option 3${NC} to generate UDEV rules."
+    echo -e "${BLUE}==============================================================${NC}"
 else
-    echo -e "${RED}[ERROR] No data collected.${NC}"
+    echo -e "${RED}[ERROR] No data collected. Inventory was not updated.${NC}"
 fi
