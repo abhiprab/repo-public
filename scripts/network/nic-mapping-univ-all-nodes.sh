@@ -50,7 +50,6 @@ run_node() {
         echo -e "${RED}[ERROR]${NC} (${node}) connection failed."
     fi
 }
-}
 
 export -f run_node
 export TEMP_DIR LOCAL_ENGINE REMOTE_TMP_EXE DEBUG_IMAGE DATE_STR
