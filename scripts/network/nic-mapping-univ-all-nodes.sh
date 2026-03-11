@@ -3,69 +3,64 @@ set -euo pipefail
 
 # --- CONFIG ---
 DATE_STR=$(date +%F-%H%M%S)
-OUT_DIR="/cm/shared/scripts/net-mapping/out"
-TEMP_DIR="${OUT_DIR}/tmp_raw"
-SCRIPT_ON_NODE="/cm/shared/scripts/net-mapping/nic-mapping-univ.sh"
-DEBUG_IMAGE="registry.k8s.io/e2e-test-images/busybox:1.29"
+OUT_DIR="/cm/shared/scripts/out"
+# Change output to the NDT standard path
+NDT_OUT="/cm/shared/scripts/net-mapping/out/manual_inventory.csv"
+SCRIPT_ON_NODE="/cm/shared/scripts/nic-mapping-univ.sh"
+# Use profile=general to stop the legacy warning
+DEBUG_OPTS="--quiet --image=registry.k8s.io/e2e-test-images/busybox:1.29 --profile=general"
 
-# Colors
-export GREEN='\033[0;32m'
-export BLUE='\033[0;34m'
-export RED='\033[0;31m'
-export NC='\033[0m'
+mkdir -p "$OUT_DIR"
 
-mkdir -p "$TEMP_DIR"
-
-# Resolve Node List
-NODES=$(kubectl get nodes -l node-role.kubernetes.io/worker= -o jsonpath='{.items[*].metadata.name}')
-
-# --- THE COLLECTION FUNCTION ---
+# --- COLLECTION FUNCTION ---
 run_node() {
-  local node="$1"
-  local out_csv="${TEMP_DIR}/${node}-${DATE_STR}.csv"
-  
-  echo -e "${BLUE}[INFO]${NC} (${node}) collecting via stream..."
+    local node="$1"
+    local out_csv="${OUT_DIR}/${node}-${DATE_STR}.csv"
+    echo -e "${BLUE}[INFO]${NC} (${node}) collecting..."
 
-  # 1. We use -i (interactive) without -t (TTY) to stream raw CSV data
-  # 2. --profile=general stops the legacy warning
-  # 3. Output is redirected to the JUMPBOX local disk
-  if kubectl debug "node/${node}" -i --quiet --image="${DEBUG_IMAGE}" --profile=general -- \
-    chroot /host bash -lc "'${SCRIPT_ON_NODE}' --csv --print" > "$out_csv" 2>/dev/null; then
-    
-    # Strip any potential TTY carriage returns and validate header
-    sed -i 's/\r//g' "$out_csv"
-    
-    if [[ -s "$out_csv" ]] && grep -q "HOSTNAME" "$out_csv"; then
-      echo -e "${GREEN}[SUCCESS]${NC} (${node}) captured."
+    # Executing via debug pod, writing directly to shared mount
+    # Using 'bash -lc' ensures the shared path is in the environment
+    if kubectl debug "node/${node}" $DEBUG_OPTS -- \
+        chroot /host bash -lc "'$SCRIPT_ON_NODE' --csv --out '$out_csv'" >/dev/null 2>&1; then
+        
+        # Settle loop: Wait up to 5 seconds for NFS to show the file on the Jumpbox
+        local retry=0
+        while [ ! -f "$out_csv" ] && [ $retry -lt 5 ]; do
+            sleep 1
+            ((retry++))
+        done
+
+        if [ -f "$out_csv" ]; then
+            echo -e "${GREEN}[SUCCESS]${NC} (${node}) captured."
+        else
+            echo -e "${YELLOW}[WARN]${NC} (${node}) File written but not visible on Jumpbox yet."
+        fi
     else
-      echo -e "${RED}[ERROR]${NC} (${node}) capture failed or empty."
-      rm -f "$out_csv"
+        echo -e "${RED}[ERROR]${NC} (${node}) debug pod failed."
     fi
-  else
-    echo -e "${RED}[ERROR]${NC} (${node}) kubectl connection failed."
-  fi
 }
 
-# Export function and variables for xargs subshell
 export -f run_node
-export SCRIPT_ON_NODE TEMP_DIR DEBUG_IMAGE DATE_STR BLUE GREEN RED NC
+export SCRIPT_ON_NODE OUT_DIR DEBUG_OPTS DATE_STR BLUE GREEN RED YELLOW NC
 
-# --- EXECUTION ---
-printf "%s\n" $NODES | xargs -I{} -P 4 bash -c 'run_node "{}"'
+# Run parallel collection
+NODES=$(kubectl get nodes -l node-role.kubernetes.io/worker= -o jsonpath='{.items[*].metadata.name}')
+printf "%s\n" $NODES | xargs -I{} -P 8 bash -c 'run_node "{}"'
 
-# --- MERGE ---
+# --- MERGE LOGIC ---
+echo -e "${BLUE}[INFO] Finalizing merge...${NC}"
+sleep 2 # Final breath for NFS sync
 shopt -s nullglob
-files=( "$TEMP_DIR"/*-"$DATE_STR".csv )
+files=( "${OUT_DIR}"/*"${DATE_STR}".csv )
 
 if [[ ${#files[@]} -gt 0 ]]; then
-  # Use the first file for the header
-  head -n 1 "${files[0]}" > "${OUT_DIR}/manual_inventory.csv"
-  # Append data from all files, skipping headers
-  for f in "${files[@]}"; do
-    tail -n +2 "$f" >> "${OUT_DIR}/manual_inventory.csv"
-  done
-  echo -e "${GREEN}[OK] Merged results into ${OUT_DIR}/manual_inventory.csv${NC}"
+    # Create the NDT master CSV
+    head -n 1 "${files[0]}" > "$NDT_OUT"
+    for f in "${files[@]}"; do
+        tail -n +2 "$f" >> "$NDT_OUT"
+    done
+    echo -e "${GREEN}[OK] Merged ${#files[@]} nodes into $NDT_OUT${NC}"
 else
-  echo -e "${RED}[ERROR] No data captured from any nodes.${NC}"
-  exit 1
+    echo -e "${RED}[ERROR] No CSV files found for this run.${NC}"
+    exit 1
 fi
