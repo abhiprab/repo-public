@@ -33,21 +33,20 @@ run_node() {
     
     echo "[INFO] (${node}) streaming discovery script..."
 
-    # 1. We pipe the local script into 'bash -s'
-    # 2. We skip chmod because we are executing the stream directly
-    # 3. We ensure the output only contains the CSV data
-    if kubectl debug "node/${node}" -it --quiet --image="$DEBUG_IMAGE" --profile=general -- \
+    # REMOVED -it to prevent TTY garbage/hangs
+    # Added --profile=general to satisfy newer K8s APIs
+    if kubectl debug "node/${node}" --quiet --image="$DEBUG_IMAGE" --profile=general -- \
         chroot /host bash -s -- --csv --print < "$LOCAL_ENGINE" > "$node_csv" 2>/dev/null; then
         
-        # 4. VALIDATION: Check if the first line is actually a CSV header
-        if head -n 1 "$node_csv" | grep -q "HOSTNAME"; then
-            echo "[SUCCESS] (${node}) data captured."
+        # Check if we got the CSV header 'HOSTNAME'
+        if grep -q "HOSTNAME" "$node_csv"; then
+            echo -e "${GREEN}[SUCCESS]${NC} (${node}) data captured."
         else
-            echo "[ERROR] (${node}) captured error instead of data. Check node sudoers."
+            echo -e "${RED}[ERROR]${NC} (${node}) captured invalid data. Raw content: $(cat $node_csv)"
             rm -f "$node_csv"
         fi
     else
-        echo "[ERROR] (${node}) connection failed."
+        echo -e "${RED}[ERROR]${NC} (${node}) connection failed."
     fi
 }
 
