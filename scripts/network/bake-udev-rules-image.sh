@@ -18,7 +18,7 @@ CYAN='\033[0;36m'
 RED='\033[0;31m'
 NC='\033[0m'
 
-echo -e "${BLUE}[INFO] Querying Bright Cluster Manager for Software Images...${NC}\n"
+echo -e "${BLUE}[INFO] Querying Base Command Manager for Software Images...${NC}\n"
 
 # 1. Capture raw list
 RAW_LIST=$(cmsh -c "softwareimage; list")
