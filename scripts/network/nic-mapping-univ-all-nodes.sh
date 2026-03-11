@@ -21,35 +21,27 @@ mkdir -p "$TEMP_DIR"
 # Get worker nodes
 NODES=$(kubectl get nodes -l node-role.kubernetes.io/worker= -o jsonpath='{.items[*].metadata.name}')
 
-run_node() {
-    local node="$1"
-    local node_csv="${TEMP_DIR}/${node}-${DATE_STR}.csv"
-    
-    echo -e "${BLUE}[INFO]${NC} (${node}) collecting via shared mount..."
+run_one_node() {
+  local node="$1"
+  local out_csv="${TEMP_DIR}/${node}-${DATE_STR}.csv"
 
-    # 1. Run via kubectl debug
-    # 2. Command: chroot /host and execute the script
-    # 3. Target: Tell the script to save the CSV directly to the shared path
-    # 4. Profile: Use --profile=general to ensure host access (added for modern K8s)
-    if kubectl debug "node/${node}" --quiet --image="${DEBUG_IMAGE}" --profile=general -- \
-        chroot /host bash -lc "
-            if [[ ! -x '${LOCAL_ENGINE}' ]]; then
-                echo 'ERROR: Script not found on node' >&2
-                exit 1
-            fi
-            # Execute and write directly to the path the jumpbox can see
-            '${LOCAL_ENGINE}' --csv --out '${node_csv}'
-        " >/dev/null 2>&1; then
+  echo -e "${BLUE}[INFO]${NC} (${node}) streaming data to jumpbox..."
 
-        # Verify the jumpbox can see the file the node just wrote
-        if [[ -f "$node_csv" ]]; then
-            echo -e "${GREEN}[SUCCESS]${NC} (${node}) data captured."
-        else
-            echo -e "${RED}[ERROR]${NC} (${node}) CSV not visible on jumpbox. Check mount sync."
-        fi
+  # 1. Use --profile=general to stop the legacy warning
+  # 2. Use -i (interactive) without -t (TTY) to allow clean data streaming
+  # 3. We run the script on the node, but the '>' happens on the JUMPBOX
+  if kubectl debug "node/${node}" -i --quiet --image="${DEBUG_IMAGE}" --profile=general -- \
+    chroot /host bash -lc "'${SCRIPT_ON_NODE}' --csv --print" > "$out_csv" 2>/dev/null; then
+
+    if [[ -s "$out_csv" ]] && grep -q "HOSTNAME" "$out_csv"; then
+      echo -e "${GREEN}[SUCCESS]${NC} (${node}) data captured."
     else
-        echo -e "${RED}[ERROR]${NC} (${node}) execution failed."
+      echo -e "${RED}[ERROR]${NC} (${node}) received empty or invalid data."
+      rm -f "$out_csv"
     fi
+  else
+    echo -e "${RED}[ERROR]${NC} (${node}) connection failed."
+  fi
 }
 
 export -f run_node
