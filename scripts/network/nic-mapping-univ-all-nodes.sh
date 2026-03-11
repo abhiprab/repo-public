@@ -33,33 +33,26 @@ NODES=$(kubectl get nodes -l node-role.kubernetes.io/worker= -o jsonpath='{.item
 run_node() {
     local node=$1
     local node_csv="${TEMP_DIR}/${node}-${DATE_STR}.csv"
-    # We write to a path the host can see and execute from
     local host_path="/usr/local/bin/ndt-engine.sh"
 
-    echo -e "${BLUE}[INFO]${NC} (${node}) pushing engine to host storage..."
+    echo -e "${BLUE}[INFO]${NC} (${node}) capturing data..."
 
-    # 1. Capture the script content and write it directly to the host filesystem
-    # We pipe the local file through kubectl into a 'cat' command on the node
-    cat "$LOCAL_ENGINE" | kubectl debug "node/${node}" --quiet --image="$DEBUG_IMAGE" --profile=general -- \
-        chroot /host bash -c "cat > $host_path && chmod +x $host_path" >/dev/null 2>&1
-
-    # 2. Execute the script from the host path
-    if kubectl debug "node/${node}" --quiet --image="$DEBUG_IMAGE" --profile=general -- \
-        chroot /host bash -c "$host_path --csv --print" > "$node_csv" 2>/dev/null; then
+    # 1. Use -i (interactive stdin) but NO -t (no TTY)
+    # 2. Redirect the script into the pod
+    # 3. Use 'cat' to capture the output explicitly
+    if kubectl debug "node/${node}" -i --quiet --image="$DEBUG_IMAGE" --profile=general -- \
+        chroot /host bash -c "cat > $host_path && chmod +x $host_path && $host_path --csv --print && rm -f $host_path" < "$LOCAL_ENGINE" > "$node_csv" 2>/dev/null; then
 
         if grep -q "HOSTNAME" "$node_csv"; then
             echo -e "${GREEN}[SUCCESS]${NC} (${node}) data captured."
         else
-            echo -e "${RED}[ERROR]${NC} (${node}) failed to capture CSV data."
+            # Debug: what did we get?
+            echo -e "${RED}[ERROR]${NC} (${node}) no CSV data in output."
             rm -f "$node_csv"
         fi
     else
-        echo -e "${RED}[ERROR]${NC} (${node}) execution failed."
+        echo -e "${RED}[ERROR]${NC} (${node}) connection failed."
     fi
-
-    # 3. Cleanup: Remove the script from the node's host filesystem
-    kubectl debug "node/${node}" --quiet --image="$DEBUG_IMAGE" --profile=general -- \
-        chroot /host rm -f "$host_path" >/dev/null 2>&1
 }
 
 export -f run_node
