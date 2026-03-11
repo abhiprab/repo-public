@@ -14,27 +14,36 @@ mkdir -p "$TEMP_DIR"
 run_node() {
     local node="$1"
     local node_csv="${TEMP_DIR}/${node}-${DATE_STR}.csv"
-    # The absolute path to the script as seen by the worker nodes
+    local node_err="${TEMP_DIR}/${node}-${DATE_STR}.err"
     local script_path="/cm/shared/scripts/net-mapping/nic-mapping-univ.sh"
-    
+
     echo -e "${BLUE}[INFO]${NC} (${node}) capturing via SSH..."
 
-    # -o BatchMode=yes: Don't hang on password prompts
-    # -o ConnectTimeout=5: Fail fast if node is down
-    if ssh -o BatchMode=yes -o StrictHostKeyChecking=no "$node" \
-        "sudo $script_path --csv --print" > "$node_csv" 2>/dev/null; then
-        
-        # Clean TTY garbage
+    if ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=5 "$node" \
+        "sudo -n $script_path --csv --print" > "$node_csv" 2>"$node_err"; then
+
         sed -i 's/\r//g' "$node_csv"
 
         if [[ -s "$node_csv" ]] && grep -q "HOSTNAME" "$node_csv"; then
             echo -e "${GREEN}[SUCCESS]${NC} (${node}) captured."
+            rm -f "$node_err"
         else
-            echo -e "${RED}[ERROR]${NC} (${node}) failed. Check if sudo requires a password."
+            echo -e "${RED}[ERROR]${NC} (${node}) command ran but output is invalid."
+            [[ -s "$node_err" ]] && sed 's/^/  /' "$node_err"
             rm -f "$node_csv"
         fi
     else
-        echo -e "${RED}[ERROR]${NC} (${node}) SSH connection failed."
+        if [[ -s "$node_err" ]]; then
+            if grep -qi "a password is required\|sudo:" "$node_err"; then
+                echo -e "${RED}[ERROR]${NC} (${node}) sudo requires a password."
+            else
+                echo -e "${RED}[ERROR]${NC} (${node}) SSH/remote command failed."
+                sed 's/^/  /' "$node_err"
+            fi
+        else
+            echo -e "${RED}[ERROR]${NC} (${node}) SSH connection failed."
+        fi
+        rm -f "$node_csv"
     fi
 }
 
