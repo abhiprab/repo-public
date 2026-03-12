@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# generate-udev-rules.sh - Version 1.9
-# Hard-gate: Aborts with standardized UI error if inventory is missing.
-# Includes Post-Generation file summary.
+# generate-udev-rules.sh - Version 2.3
+# Hard-gate: Aborts if inventory is missing.
+# Sanitization: Force-cleans quotes and CR/LF to prevent "Missing Data" errors.
+# Convention: NVIDIA Spectrum-X (eth_rX_pY / roce_rX_pY)
 
 set -u
 
@@ -12,64 +13,44 @@ INPUT_CSV="${BASE_DIR}/out/manual_inventory.csv"
 PYTHON_GEN="${BASE_DIR}/generate-udev-rules.py"
 
 # Colors
-BLUE='\033[0;34m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-CYAN='\033[0;36m'
-RED='\033[0;31m'
-NC='\033[0m'
+BLUE='\033[0;34m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; CYAN='\033[0;36m'; RED='\033[0;31m'; NC='\033[0m'
 
 mkdir -p "$OUT_DIR"
 
 # --- 1. PRE-FLIGHT CHECK (FILE LEVEL) ---
 if [[ ! -f "$INPUT_CSV" ]]; then
-    echo -e "${RED}[ERROR] Inventory data is missing!${NC}"
+    echo -e "${RED}[ERROR] Inventory database not found!${NC}"
     echo -e "${YELLOW}Path:${NC} $INPUT_CSV"
-    echo -e "\n${BLUE}[ACTION REQUIRED]${NC}"
-    echo -e "You must perform an initial inventory scan first."
-    echo -e "Please go back to the Main Menu and choose ${CYAN}Option 2 (Inventory Scan)${NC}."
+    echo -e "\n${BLUE}[ACTION REQUIRED]${NC} Run Option 2 first."
     echo -e "----------------------------------------------------------------------------"
     exit 1
 fi
 
-# --- 2. NODE STATUS QUERY & VALIDATION ---
+# --- 2. SANITIZATION GATE ---
+# We create a "clean" version of the CSV for all logic checks to bypass quote/CR issues
+CLEAN_CSV="/tmp/ndt_inventory_clean.csv"
+tr -d '\r"' < "$INPUT_CSV" | sed 's/[[:space:]]*//g' > "$CLEAN_CSV"
+
+# --- 3. NODE STATUS QUERY ---
 echo -e "${BLUE}[INFO] Querying Kubernetes for worker node status...${NC}"
 RAW_NODES=$(kubectl get nodes -l node-role.kubernetes.io/worker=)
 mapfile -t ALL_NODES < <(echo "$RAW_NODES" | awk 'NR>1 {print $1}')
 
-# Check if ANY of these nodes exist in the CSV (Handling quotes and carriage returns)
-FOUND_ANY=0
-for node in "${ALL_NODES[@]}"; do
-    # We strip both double quotes (") and carriage returns (\r) for the comparison
-    if tr -d '\r"' < "$INPUT_CSV" | grep -q "^${node}," 2>/dev/null; then
-        FOUND_ANY=1
-        break
-    fi
-done
-
-if [[ $FOUND_ANY -eq 0 ]]; then
-    echo -e "${RED}[ERROR] No inventory data found for any active worker nodes!${NC}"
-    echo -e "${YELLOW}Path:${NC} $INPUT_CSV"
-    echo -e "\n${CYAN}Debug Info:${NC}"
-    echo -e "  K8s Node Sample: ${ALL_NODES[0]}"
-    echo -e "  CSV First Entry: $(tail -n +2 "$INPUT_CSV" | head -n 1 | cut -d',' -f1)"
-    echo -e "\n${BLUE}[ACTION REQUIRED]${NC}"
-    echo -e "The hostnames in the CSV are likely quoted or formatted differently."
-    echo -e "Please ensure Option 2 is using the correct CSV export format."
-    echo -e "----------------------------------------------------------------------------"
-    exit 1
-fi
-
-# --- 3. SELECTION MENU ---
+# --- 4. SELECTION MENU ---
 echo -e "\n${CYAN}Cluster Worker Node Status:${NC}"
 echo -e "${BLUE}-----------------------------------------------------------------------${NC}"
 echo "$RAW_NODES"
 echo -e "${BLUE}-----------------------------------------------------------------------${NC}"
 
-echo -e "${YELLOW}Select Nodes for Rule Generation:${NC}"
+echo -e "${YELLOW}Select Nodes for NVIDIA Rule Generation (eth_rX_pY):${NC}"
 for i in "${!ALL_NODES[@]}"; do
     node="${ALL_NODES[$i]}"
-    inv_hint=$(grep -q "^${node}," "$INPUT_CSV" && echo -e "${GREEN}(In Inventory)${NC}" || echo -e "${RED}(Missing Data)${NC}")
+    # Match against the CLEANED csv
+    if grep -q "^${node}," "$CLEAN_CSV" 2>/dev/null; then
+        inv_hint="${GREEN}(In Inventory)${NC}"
+    else
+        inv_hint="${RED}(Missing Data)${NC}"
+    fi
     printf "%2d) %-20s %b\n" "$((i+1))" "$node" "$inv_hint"
 done
 echo -e " a) ALL Nodes with Inventory Data"
@@ -77,64 +58,59 @@ echo -e " q) Quit"
 
 read -p ">> Selection: " choice
 
-# --- 4. SELECTION PROCESSING ---
+# --- 5. PROCESSING SELECTION ---
 SELECTED_NODES=()
 if [[ "$choice" == "a" ]]; then
     for node in "${ALL_NODES[@]}"; do
-        grep -q "^${node}," "$INPUT_CSV" && SELECTED_NODES+=("$node")
+        grep -q "^${node}," "$CLEAN_CSV" && SELECTED_NODES+=("$node")
     done
 elif [[ "$choice" != "q" && -n "$choice" ]]; then
     IFS=',' read -ra ADDR <<< "$choice"
     for idx in "${ADDR[@]}"; do
         idx=$(echo "$idx" | tr -d ' ')
         node="${ALL_NODES[$((idx-1))]}"
-        
-        if ! grep -q "^${node}," "$INPUT_CSV" 2>/dev/null; then
-            echo -e "${RED}[ERROR]${NC} Node '$node' is missing inventory data. Run Option 2 first."
+        if ! grep -q "^${node}," "$CLEAN_CSV" 2>/dev/null; then
+            echo -e "${RED}[ERROR]${NC} Node '$node' has no inventory data. Aborting."
             exit 1
         fi
         SELECTED_NODES+=("$node")
     done
 fi
 
-# --- 5. EXECUTION ---
+# --- 6. RULE GENERATION ---
 if [[ ${#SELECTED_NODES[@]} -gt 0 ]]; then
+    # Create the final subset for Python
     FILTERED_CSV="${OUT_DIR}/filtered_selection.csv"
-    head -n 1 "$INPUT_CSV" > "$FILTERED_CSV"
+    head -n 1 "$CLEAN_CSV" > "$FILTERED_CSV"
     for n in "${SELECTED_NODES[@]}"; do 
-        grep "^${n}," "$INPUT_CSV" >> "$FILTERED_CSV"
+        grep "^${n}," "$CLEAN_CSV" >> "$FILTERED_CSV"
     done
     
-    echo -e "\n${BLUE}[INFO] Generating rules for selected nodes...${NC}"
+    echo -e "\n${BLUE}[INFO] Running Rule Engine (NVIDIA Rail-Plane Convention)...${NC}"
     if python3 "$PYTHON_GEN" "$FILTERED_CSV" "$OUT_DIR"; then
         
-        # --- FINALIZATION SUMMARY ---
         echo -e "\n${BLUE}==============================================================${NC}"
-        echo -e "${GREEN}[SUCCESS] UDEV Rules Generated Successfully!${NC}"
+        echo -e "${GREEN}[SUCCESS] NVIDIA Rules Generated Successfully!${NC}"
         echo -e "${BLUE}==============================================================${NC}"
         
-        echo -e "${YELLOW}Generated Files & Paths:${NC}"
-        echo -e "  ${CYAN}Directory :${NC} $OUT_DIR"
-        echo -e "  ${CYAN}Rules List:${NC}"
-        
-        # List the actual .rules files generated
+        echo -e "${YELLOW}Generated Files:${NC}"
         shopt -s nullglob
         for rule in "$OUT_DIR"/*.rules; do
-            echo -e "    - $(basename "$rule")"
+            echo -e "  - $(basename "$rule")"
         done
 
         RULE_COUNT=$(ls -1 "$OUT_DIR"/*.rules 2>/dev/null | wc -l)
         echo -e "\n${CYAN}Summary:${NC}"
+        echo -e "  Total Files: $RULE_COUNT"
+        echo -e "  Convention : Rail/Plane (eth_rX_pY)"
         echo -e "--------------------------------------------------------------"
-        echo -e "  Total Rule Files: ${GREEN}${RULE_COUNT}${NC}"
-        echo -e "  Master Mapping  : ${CYAN}filtered_selection.csv${NC}"
-        echo -e "--------------------------------------------------------------"
-
-        echo -e "\n${YELLOW}[NEXT STEP]${NC} You can now proceed to ${CYAN}Option 4${NC} to Deploy or ${CYAN}Option 5/6${NC} to Bake."
+        echo -e "${YELLOW}[NEXT STEP]${NC} Use Option 4 to Deploy or Option 5/6 to Bake."
         echo -e "${BLUE}==============================================================${NC}"
     else
-        echo -e "${RED}[ERROR] Python rule generator failed.${NC}"
+        echo -e "${RED}[ERROR] Python engine failed. Check $PYTHON_GEN${NC}"
     fi
 else
-    echo -e "${RED}[EXIT] No nodes selected.${NC}"
+    echo -e "${RED}[EXIT] No valid nodes selected.${NC}"
 fi
+
+rm -f "$CLEAN_CSV"
