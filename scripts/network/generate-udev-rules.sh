@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
-# generate-udev-rules.sh - Version 2.3
-# Hard-gate: Aborts if inventory is missing.
-# Sanitization: Force-cleans quotes and CR/LF to prevent "Missing Data" errors.
-# Convention: NVIDIA Spectrum-X (eth_rX_pY / roce_rX_pY)
+# generate-udev-rules.sh - Version 2.4
+# Purpose: Generate NVIDIA-compliant UDEV rules (eth_rX_pY) locally.
+# Logic: Aborts if inventory is missing; Sanitizes input to prevent "Missing Data" errors.
 
 set -u
 
@@ -17,17 +16,18 @@ BLUE='\033[0;34m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; CYAN='\033[0;36m'; R
 
 mkdir -p "$OUT_DIR"
 
-# --- 1. PRE-FLIGHT CHECK (FILE LEVEL) ---
+# --- 1. PRE-FLIGHT CHECK ---
 if [[ ! -f "$INPUT_CSV" ]]; then
     echo -e "${RED}[ERROR] Inventory database not found!${NC}"
     echo -e "${YELLOW}Path:${NC} $INPUT_CSV"
-    echo -e "\n${BLUE}[ACTION REQUIRED]${NC} Run Option 2 first."
+    echo -e "\n${BLUE}[ACTION REQUIRED]${NC} Please run Option 2 (Inventory Scan) first."
     echo -e "----------------------------------------------------------------------------"
     exit 1
 fi
 
-# --- 2. SANITIZATION GATE ---
-# We create a "clean" version of the CSV for all logic checks to bypass quote/CR issues
+# --- 2. DEEP SANITIZATION ---
+# This creates a temporary clean CSV (no quotes, no CR, no trailing spaces) 
+# to ensure the 'grep' and the 'Python engine' match Kubernetes names exactly.
 CLEAN_CSV="/tmp/ndt_inventory_clean.csv"
 tr -d '\r"' < "$INPUT_CSV" | sed 's/[[:space:]]*//g' > "$CLEAN_CSV"
 
@@ -45,7 +45,7 @@ echo -e "${BLUE}----------------------------------------------------------------
 echo -e "${YELLOW}Select Nodes for NVIDIA Rule Generation (eth_rX_pY):${NC}"
 for i in "${!ALL_NODES[@]}"; do
     node="${ALL_NODES[$i]}"
-    # Match against the CLEANED csv
+    # Check against the CLEANED version of the database
     if grep -q "^${node}," "$CLEAN_CSV" 2>/dev/null; then
         inv_hint="${GREEN}(In Inventory)${NC}"
     else
@@ -77,23 +77,25 @@ elif [[ "$choice" != "q" && -n "$choice" ]]; then
     done
 fi
 
-# --- 6. RULE GENERATION ---
+# --- 6. EXECUTION (LOCAL GENERATION ONLY) ---
 if [[ ${#SELECTED_NODES[@]} -gt 0 ]]; then
-    # Create the final subset for Python
+    # Prepare a specific filtered CSV for the Python Engine
     FILTERED_CSV="${OUT_DIR}/filtered_selection.csv"
     head -n 1 "$CLEAN_CSV" > "$FILTERED_CSV"
     for n in "${SELECTED_NODES[@]}"; do 
         grep "^${n}," "$CLEAN_CSV" >> "$FILTERED_CSV"
     done
     
-    echo -e "\n${BLUE}[INFO] Running Rule Engine (NVIDIA Rail-Plane Convention)...${NC}"
+    echo -e "\n${BLUE}[INFO] Running Rule Engine...${NC}"
+    # Calls the Python script to handle the PCI sorting and naming logic
     if python3 "$PYTHON_GEN" "$FILTERED_CSV" "$OUT_DIR"; then
         
         echo -e "\n${BLUE}==============================================================${NC}"
-        echo -e "${GREEN}[SUCCESS] NVIDIA Rules Generated Successfully!${NC}"
+        echo -e "${GREEN}[SUCCESS] NVIDIA Rules Generated Locally!${NC}"
         echo -e "${BLUE}==============================================================${NC}"
         
-        echo -e "${YELLOW}Generated Files:${NC}"
+        echo -e "${YELLOW}Output Directory:${NC} $OUT_DIR"
+        echo -e "${YELLOW}Files Created:${NC}"
         shopt -s nullglob
         for rule in "$OUT_DIR"/*.rules; do
             echo -e "  - $(basename "$rule")"
@@ -101,16 +103,17 @@ if [[ ${#SELECTED_NODES[@]} -gt 0 ]]; then
 
         RULE_COUNT=$(ls -1 "$OUT_DIR"/*.rules 2>/dev/null | wc -l)
         echo -e "\n${CYAN}Summary:${NC}"
-        echo -e "  Total Files: $RULE_COUNT"
-        echo -e "  Convention : Rail/Plane (eth_rX_pY)"
+        echo -e "  Total Files Created : $RULE_COUNT"
+        echo -e "  Naming Convention   : NVIDIA Spectrum-X (Rail/Plane)"
         echo -e "--------------------------------------------------------------"
-        echo -e "${YELLOW}[NEXT STEP]${NC} Use Option 4 to Deploy or Option 5/6 to Bake."
+        echo -e "${YELLOW}[INFO]${NC} Rules are ready. Use the Deployment or Baking scripts next."
         echo -e "${BLUE}==============================================================${NC}"
     else
-        echo -e "${RED}[ERROR] Python engine failed. Check $PYTHON_GEN${NC}"
+        echo -e "${RED}[ERROR] Python engine failed. Please check $PYTHON_GEN${NC}"
     fi
 else
     echo -e "${RED}[EXIT] No valid nodes selected.${NC}"
 fi
 
+# Cleanup temp files
 rm -f "$CLEAN_CSV"
