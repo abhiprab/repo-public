@@ -320,4 +320,4 @@ done < "$DISCOVERY_DIR/jobs.txt"
 echo ""
 echo "========================================================================"
 echo " Finished! All unique model reports have been saved in: ./$OUTPUT_DIR/"
-echo "=======================================
+echo "======================================="
